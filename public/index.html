@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microsoft Error Index</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+    (function(){
+        var s = localStorage.getItem('appearance');
+        var prefersDark = window.matchMedia('(prefers-color-scheme:dark)').matches;
+        if (s === 'light' || (!s && !prefersDark)) {
+            document.documentElement.classList.add('light');
+        }
+    })();
+    </script>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            color-scheme: dark;
+            --bg-root: #0a0c10;
+            --bg-surface: rgba(22, 27, 34, 0.95);
+            --bg-surface-hover: rgba(33, 38, 48, 0.95);
+            --bg-elevated: rgba(30, 36, 46, 0.98);
+            --bg-inset: rgba(10, 12, 16, 0.6);
+            --border-default: rgba(240, 246, 252, 0.08);
+            --border-muted: rgba(240, 246, 252, 0.04);
+            --border-active: rgba(240, 246, 252, 0.16);
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-tertiary: #484f58;
+            --text-link: #58a6ff;
+            --accent-red: #f85149;
+            --accent-orange: #d29922;
+            --accent-amber: #e3b341;
+            --accent-green: #3fb950;
+            --accent-blue: #58a6ff;
+            --accent-purple: #bc8cff;
+            --accent-cyan: #39d2c0;
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 3px 12px rgba(0, 0, 0, 0.4);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+            --shadow-glow-red: 0 0 20px rgba(248, 81, 73, 0.15);
+            --radius-sm: 6px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            --font-mono: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+            --font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            --product-entra: #58a6ff;
+            --product-graph: #bc8cff;
+            --product-intune: #3fb950;
+            --product-sccm: #d29922;
+            --product-exchange: #f78166;
+            --product-sharepoint: #39d2c0;
+        }
+
+        :root.light {
+            color-scheme: light;
+            --bg-root: #f0f2f5;
+            --bg-surface: rgba(255, 255, 255, 0.95);
+            --bg-surface-hover: rgba(246, 248, 250, 0.95);
+            --bg-elevated: rgba(255, 255, 255, 0.98);
+            --bg-inset: rgba(234, 238, 242, 0.6);
+            --border-default: rgba(31, 35, 40, 0.12);
+            --border-muted: rgba(31, 35, 40, 0.06);
+            --border-active: rgba(31, 35, 40, 0.24);
+            --text-primary: #1f2328;
+            --text-secondary: #656d76;
+            --text-tertiary: #afb8c1;
+            --text-link: #0969da;
+            --accent-red: #cf222e;
+            --accent-orange: #bf8700;
+            --accent-amber: #9a6700;
+            --accent-green: #1a7f37;
+            --accent-blue: #0969da;
+            --accent-purple: #8250df;
+            --accent-cyan: #1b7c83;
+            --shadow-sm: 0 1px 2px rgba(31, 35, 40, 0.06);
+            --shadow-md: 0 3px 12px rgba(31, 35, 40, 0.08);
+            --shadow-lg: 0 8px 32px rgba(31, 35, 40, 0.12);
+            --shadow-glow-red: 0 0 20px rgba(207, 34, 46, 0.08);
+        }
+
+        body {
+            font-family: var(--font-body);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+            background: var(--bg-root);
+        }
+
+        /* Subtle grid background */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(var(--border-muted) 1px, transparent 1px),
+                linear-gradient(90deg, var(--border-muted) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--border-active); }
+
+        @keyframes fade-up {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 1; }
+        }
+        @keyframes scan {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100vh); }
+        }
+        .animate-fade-up {
+            opacity: 0;
+            animation: fade-up 0.3s ease forwards;
+        }
+
+        /* ── Layout ─────────────────────────────────────── */
+        .app-container {
+            position: relative;
+            z-index: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px 20px 80px;
+        }
+
+        /* ── Header ─────────────────────────────────────── */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 0 24px;
+            border-bottom: 1px solid var(--border-default);
+            margin-bottom: 20px;
+        }
+        .header-left { display: flex; align-items: center; gap: 12px; }
+        .header-icon {
+            width: 36px; height: 36px;
+            display: flex; align-items: center; justify-content: center;
+            background: var(--accent-red);
+            border-radius: var(--radius-md);
+            color: #fff;
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 16px;
+            box-shadow: var(--shadow-glow-red);
+        }
+        .header-title {
+            font-family: var(--font-mono);
+            font-size: 1.15rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+        }
+        .header-title span { color: var(--text-tertiary); font-weight: 400; }
+        .header-right { display: flex; align-items: center; gap: 8px; }
+        .header-meta {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            color: var(--text-tertiary);
+            display: flex; align-items: center; gap: 6px;
+        }
+        .header-meta .dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            animation: pulse-dot 2s ease infinite;
+        }
+
+        /* ── Controls ───────────────────────────────────── */
+        .controls-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .search-wrapper {
+            flex: 1 1 300px;
+            position: relative;
+        }
+        .search-wrapper svg {
+            position: absolute;
+            left: 12px; top: 50%;
+            transform: translateY(-50%);
+            width: 16px; height: 16px;
+            color: var(--text-tertiary);
+            pointer-events: none;
+        }
+        .search-input {
+            width: 100%;
+            padding: 9px 12px 9px 36px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .search-input:focus {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+        }
+        .search-input::placeholder { color: var(--text-tertiary); }
+        .search-kbd {
+            position: absolute;
+            right: 10px; top: 50%;
+            transform: translateY(-50%);
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            color: var(--text-tertiary);
+            background: var(--bg-inset);
+            border: 1px solid var(--border-default);
+            border-radius: 4px;
+            padding: 2px 6px;
+            pointer-events: none;
+        }
+        .filter-select {
+            padding: 9px 28px 9px 10px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-family: var(--font-body);
+            font-size: 0.8rem;
+            outline: none;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23484f58' viewBox='0 0 16 16'%3E%3Cpath d='M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 8px center;
+            transition: border-color 0.15s;
+        }
+        .filter-select:focus { border-color: var(--accent-blue); }
+
+        /* ── Product pills ──────────────────────────────── */
+        .product-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+        .product-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 12px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: 20px;
+            font-family: var(--font-body);
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s;
+            user-select: none;
+        }
+        .product-pill:hover {
+            background: var(--bg-surface-hover);
+            border-color: var(--border-active);
+            color: var(--text-primary);
+        }
+        .product-pill.active {
+            color: #fff;
+            border-color: transparent;
+        }
+        .product-pill .pill-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+        }
+        .product-pill .pill-count {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            opacity: 0.7;
+        }
+
+        /* Product colors */
+        .product-pill[data-product="Entra ID"].active { background: var(--product-entra); }
+        .product-pill[data-product="Microsoft Graph"].active { background: var(--product-graph); }
+        .product-pill[data-product="Intune"].active { background: var(--product-intune); color: #fff; }
+        .product-pill[data-product="SCCM"].active { background: var(--product-sccm); color: #fff; }
+        .product-pill[data-product="Exchange"].active { background: var(--product-exchange); }
+        .product-pill[data-product="SharePoint"].active { background: var(--product-sharepoint); color: #fff; }
+        .product-pill[data-product="Entra ID"] .pill-dot { background: var(--product-entra); }
+        .product-pill[data-product="Microsoft Graph"] .pill-dot { background: var(--product-graph); }
+        .product-pill[data-product="Intune"] .pill-dot { background: var(--product-intune); }
+        .product-pill[data-product="SCCM"] .pill-dot { background: var(--product-sccm); }
+        .product-pill[data-product="Exchange"] .pill-dot { background: var(--product-exchange); }
+        .product-pill[data-product="SharePoint"] .pill-dot { background: var(--product-sharepoint); }
+
+        /* ── Stats bar ──────────────────────────────────── */
+        .stats-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+            margin-bottom: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            color: var(--text-tertiary);
+        }
+        .stats-bar .count { color: var(--text-secondary); }
+        .stats-actions { display: flex; gap: 8px; }
+        .stats-btn {
+            background: none;
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            padding: 3px 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .stats-btn:hover {
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            border-color: var(--border-active);
+        }
+
+        /* ── Error cards ────────────────────────────────── */
+        .errors-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .error-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+            padding: 12px 16px;
+            cursor: pointer;
+            transition: all 0.15s;
+            position: relative;
+        }
+        .error-card:hover {
+            background: var(--bg-surface-hover);
+            border-color: var(--border-active);
+        }
+        .error-card.expanded {
+            border-color: var(--border-active);
+            box-shadow: var(--shadow-md);
+        }
+        .error-card.focused {
+            outline: 2px solid var(--accent-blue);
+            outline-offset: -2px;
+        }
+
+        .card-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        .card-severity {
+            width: 3px;
+            min-height: 32px;
+            border-radius: 2px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+        .severity-error { background: var(--accent-red); }
+        .severity-warning { background: var(--accent-orange); }
+        .severity-info { background: var(--accent-blue); }
+
+        .card-content { flex: 1; min-width: 0; }
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .card-code {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+        }
+        .card-badges { display: flex; gap: 4px; flex-wrap: wrap; }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 1px 7px;
+            border-radius: 10px;
+            font-family: var(--font-mono);
+            font-size: 0.62rem;
+            font-weight: 500;
+            letter-spacing: 0.01em;
+        }
+        .badge-product {
+            color: #fff;
+        }
+        .badge-product[data-product="Entra ID"] { background: var(--product-entra); }
+        .badge-product[data-product="Microsoft Graph"] { background: var(--product-graph); }
+        .badge-product[data-product="Intune"] { background: var(--product-intune); }
+        .badge-product[data-product="SCCM"] { background: var(--product-sccm); }
+        .badge-product[data-product="Exchange"] { background: var(--product-exchange); }
+        .badge-product[data-product="SharePoint"] { background: var(--product-sharepoint); }
+        .badge-category {
+            background: var(--bg-inset);
+            border: 1px solid var(--border-default);
+            color: var(--text-secondary);
+        }
+        .badge-resolution {
+            background: rgba(63, 185, 80, 0.12);
+            color: var(--accent-green);
+            border: 1px solid rgba(63, 185, 80, 0.2);
+        }
+
+        .card-message {
+            margin-top: 4px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            line-height: 1.45;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        .card-expand {
+            position: absolute;
+            right: 12px; top: 14px;
+            color: var(--text-tertiary);
+            transition: transform 0.2s;
+        }
+        .error-card.expanded .card-expand { transform: rotate(90deg); }
+
+        /* ── Card detail (expanded) ─────────────────────── */
+        .card-detail {
+            display: none;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-muted);
+        }
+        .error-card.expanded .card-detail { display: block; }
+
+        .detail-section { margin-bottom: 10px; }
+        .detail-label {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-tertiary);
+            margin-bottom: 4px;
+        }
+        .detail-text {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            line-height: 1.55;
+        }
+        .detail-resolution {
+            background: rgba(63, 185, 80, 0.06);
+            border: 1px solid rgba(63, 185, 80, 0.12);
+            border-radius: var(--radius-sm);
+            padding: 10px 12px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            line-height: 1.55;
+        }
+        .detail-resolution .detail-label { color: var(--accent-green); }
+        .detail-source {
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            color: var(--text-tertiary);
+            margin-top: 8px;
+        }
+        .detail-source a { color: var(--text-link); text-decoration: none; }
+        .detail-source a:hover { text-decoration: underline; }
+
+        .copy-code-btn {
+            background: none;
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            color: var(--text-tertiary);
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            padding: 2px 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+            margin-left: 8px;
+        }
+        .copy-code-btn:hover {
+            color: var(--text-primary);
+            border-color: var(--border-active);
+            background: var(--bg-inset);
+        }
+
+        /* ── Theme toggle ───────────────────────────────── */
+        .theme-toggle {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            width: 32px; height: 32px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .theme-toggle:hover {
+            color: var(--text-primary);
+            border-color: var(--border-active);
+        }
+        .theme-toggle svg { width: 16px; height: 16px; }
+        .theme-toggle .icon-sun { display: none; }
+        :root.light .theme-toggle .icon-moon { display: none; }
+        :root.light .theme-toggle .icon-sun { display: block; }
+
+        /* ── No results ─────────────────────────────────── */
+        .no-results {
+            display: none;
+            text-align: center;
+            padding: 60px 20px;
+        }
+        .no-results-icon {
+            font-size: 2rem;
+            margin-bottom: 12px;
+            opacity: 0.4;
+        }
+        .no-results h3 {
+            font-family: var(--font-mono);
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+        .no-results p {
+            font-size: 0.78rem;
+            color: var(--text-tertiary);
+        }
+
+        /* ── Loading spinner ────────────────────────────── */
+        .spinner {
+            width: 20px; height: 20px;
+            border: 2px solid var(--border-default);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin: 40px auto;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── Scroll sentinel ────────────────────────────── */
+        #scrollSentinel { height: 1px; }
+
+        /* ── Responsive ─────────────────────────────────── */
+        @media (max-width: 640px) {
+            .app-container { padding: 12px 12px 60px; }
+            .header { flex-wrap: wrap; gap: 8px; }
+            .controls-bar { flex-direction: column; }
+            .search-wrapper { flex: 1 1 100%; }
+            .filter-select { flex: 1; }
+            .card-header { flex-direction: column; align-items: flex-start; gap: 4px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <div class="header-icon">!</div>
+                <div>
+                    <div class="header-title">error<span>index</span></div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="header-meta">
+                    <span class="dot"></span>
+                    <span id="lastUpdated">—</span>
+                    <span>·</span>
+                    <span id="totalCount">—</span>
+                </div>
+                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+                    <svg class="icon-moon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                    <svg class="icon-sun" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Search and Filters -->
+        <div class="controls-bar">
+            <div class="search-wrapper">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="text" class="search-input" id="searchInput" placeholder="Search error codes, messages..." autocomplete="off" spellcheck="false">
+                <span class="search-kbd">/</span>
+            </div>
+            <select class="filter-select" id="categoryFilter" onchange="filterErrors()">
+                <option value="">All Categories</option>
+            </select>
+            <select class="filter-select" id="sortSelect" onchange="filterErrors()">
+                <option value="relevance">Sort: Relevance</option>
+                <option value="alpha">Sort: A → Z</option>
+                <option value="product">Sort: Product</option>
+                <option value="category">Sort: Category</option>
+            </select>
+        </div>
+
+        <!-- Product pills -->
+        <div class="product-filters" id="productFilters"></div>
+
+        <!-- Stats -->
+        <div class="stats-bar">
+            <div>
+                <span class="count" id="filteredCount">—</span> errors
+                <span id="filterNote"></span>
+            </div>
+            <div class="stats-actions">
+                <button class="stats-btn" onclick="exportJSON()" title="Export filtered results as JSON">Export JSON</button>
+                <button class="stats-btn" onclick="exportCSV()" title="Export filtered results as CSV">Export CSV</button>
+            </div>
+        </div>
+
+        <!-- Error cards -->
+        <div class="errors-grid" id="errorsGrid"></div>
+        <div class="no-results" id="noResults">
+            <div class="no-results-icon">∅</div>
+            <h3>No errors found</h3>
+            <p>Try adjusting your search or filters</p>
+        </div>
+        <div id="scrollSentinel"></div>
+    </div>
+
+    <script>
+        let allErrors = [];
+        let filteredErrors = [];
+        let activeProducts = new Set();
+        let renderedCount = 0;
+        const CHUNK_SIZE = 50;
+        let scrollObserver = null;
+        let focusedCardIndex = -1;
+        let descriptionsLoaded = false;
+        const productDetailCache = new Map();
+
+        function debounce(fn, ms) {
+            let id;
+            return (...args) => { clearTimeout(id); id = setTimeout(() => fn(...args), ms); };
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+
+        // ── Data loading ──────────────────────────────────
+        async function loadErrors() {
+            try {
+                const resp = await fetch('data/manifest.json');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const manifest = await resp.json();
+
+                if (manifest.updated) {
+                    document.getElementById('lastUpdated').textContent = manifest.updated;
+                }
+                document.getElementById('totalCount').textContent =
+                    (manifest.count || manifest.d.length).toLocaleString() + ' errors';
+
+                const data = manifest.d || [];
+                allErrors = data.map(e => ({
+                    code: e.c || '',
+                    product: e.p || '',
+                    category: e.t || 'General',
+                    message: e.m || '',
+                    hasResolution: !!e.h,
+                    description: '',
+                }));
+
+                filteredErrors = [...allErrors];
+                populateFilters();
+                restoreState();
+                loadDescriptions();
+            } catch (e) {
+                document.getElementById('errorsGrid').innerHTML =
+                    '<div style="text-align:center;padding:60px 20px">' +
+                    '<h3 style="font-family:var(--font-mono);font-size:0.9rem;color:var(--accent-red)">Unable to Load Data</h3>' +
+                    '<p style="color:var(--text-tertiary);font-size:0.8rem;margin-top:8px">Run the scraper first: <code>python3 scripts/scrape_errors.py</code></p></div>';
+            }
+        }
+
+        async function loadDescriptions() {
+            try {
+                const resp = await fetch('data/descriptions.json');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const descMap = await resp.json();
+                allErrors.forEach(e => {
+                    const key = e.product + '::' + e.code;
+                    if (descMap[key]) e.description = descMap[key];
+                });
+                descriptionsLoaded = true;
+                // Re-render descriptions in visible cards
+                document.querySelectorAll('.error-card').forEach(card => {
+                    const code = card.dataset.code;
+                    const product = card.dataset.product;
+                    const key = product + '::' + code;
+                    if (descMap[key]) {
+                        const el = card.querySelector('.card-message');
+                        if (el && !el.textContent) el.textContent = descMap[key];
+                    }
+                });
+                const searchTerm = document.getElementById('searchInput').value.trim();
+                if (searchTerm) filterErrors();
+            } catch (e) {
+                descriptionsLoaded = true;
+            }
+        }
+
+        async function loadProductDetail(product) {
+            if (productDetailCache.has(product)) return productDetailCache.get(product);
+            const slug = product.toLowerCase().replace(/\s+/g, '-');
+            try {
+                const resp = await fetch('data/products/' + encodeURIComponent(slug) + '.json');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                productDetailCache.set(product, data);
+                return data;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // ── Filters ───────────────────────────────────────
+        function populateFilters() {
+            // Product pills
+            const productCounts = {};
+            allErrors.forEach(e => {
+                productCounts[e.product] = (productCounts[e.product] || 0) + 1;
+            });
+            const pf = document.getElementById('productFilters');
+            const productOrder = ['Entra ID', 'Microsoft Graph', 'Intune', 'SCCM', 'Exchange', 'SharePoint'];
+            pf.innerHTML = '<button class="product-pill active" data-product="all">' +
+                '<span class="pill-dot" style="background:var(--text-tertiary)"></span>All' +
+                '<span class="pill-count">' + allErrors.length + '</span></button>' +
+                productOrder
+                    .filter(p => productCounts[p])
+                    .map(p =>
+                        '<button class="product-pill" data-product="' + escapeHtml(p) + '">' +
+                        '<span class="pill-dot"></span>' + escapeHtml(p) +
+                        '<span class="pill-count">' + productCounts[p] + '</span></button>'
+                    ).join('');
+
+            pf.querySelectorAll('button').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const p = this.dataset.product;
+                    if (p === 'all') {
+                        activeProducts.clear();
+                    } else if (activeProducts.has(p)) {
+                        activeProducts.delete(p);
+                    } else {
+                        activeProducts.add(p);
+                    }
+                    refreshProductPills();
+                    filterErrors();
+                });
+            });
+
+            // Category filter
+            const categories = [...new Set(allErrors.map(e => e.category))].sort();
+            const catSelect = document.getElementById('categoryFilter');
+            catSelect.innerHTML = '<option value="">All Categories</option>' +
+                categories.map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('');
+        }
+
+        function refreshProductPills() {
+            document.querySelectorAll('.product-pill').forEach(btn => {
+                const p = btn.dataset.product;
+                if (p === 'all') {
+                    btn.classList.toggle('active', activeProducts.size === 0);
+                } else {
+                    btn.classList.toggle('active', activeProducts.has(p));
+                }
+            });
+        }
+
+        // ── Fuzzy search ──────────────────────────────────
+        function fuzzyScore(query, text) {
+            if (!text) return 0;
+            const q = query.toLowerCase();
+            const t = text.toLowerCase();
+            if (t === q) return q.length * 10;
+            if (t.startsWith(q)) return q.length * 6;
+            if (t.includes(q)) return q.length * 4;
+
+            let score = 0, qi = 0, consecutive = 0, lastIdx = -2;
+            for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+                if (t[ti] === q[qi]) {
+                    qi++;
+                    consecutive = (ti === lastIdx + 1) ? consecutive + 1 : 1;
+                    score += consecutive * 2;
+                    if (ti === 0 || t[ti - 1] === ' ' || t[ti - 1] === '-' || t[ti - 1] === '_') score += 3;
+                    lastIdx = ti;
+                }
+            }
+            return qi === q.length ? score : 0;
+        }
+
+        function filterErrors() {
+            const searchTerm = document.getElementById('searchInput').value.trim();
+            const searchLower = searchTerm.toLowerCase();
+            const categoryVal = document.getElementById('categoryFilter').value;
+            const sortVal = document.getElementById('sortSelect').value;
+
+            filteredErrors = allErrors.filter(e => {
+                if (searchLower) {
+                    const codeScore = fuzzyScore(searchLower, e.code) * 3;
+                    const msgScore = fuzzyScore(searchLower, e.message) * 1.5;
+                    const descScore = descriptionsLoaded ? fuzzyScore(searchLower, e.description) * 0.5 : 0;
+                    const catScore = fuzzyScore(searchLower, e.category) * 0.3;
+                    e._score = codeScore + msgScore + descScore + catScore;
+                    if (e._score < searchLower.length * 2) return false;
+                } else {
+                    e._score = 0;
+                }
+                if (categoryVal && e.category !== categoryVal) return false;
+                if (activeProducts.size > 0 && !activeProducts.has(e.product)) return false;
+                return true;
+            });
+
+            if (searchLower) {
+                filteredErrors.sort((a, b) => b._score - a._score);
+            } else {
+                switch (sortVal) {
+                    case 'product':
+                        filteredErrors.sort((a, b) => a.product.localeCompare(b.product) || a.code.localeCompare(b.code));
+                        break;
+                    case 'category':
+                        filteredErrors.sort((a, b) => a.category.localeCompare(b.category) || a.code.localeCompare(b.code));
+                        break;
+                    default:
+                        filteredErrors.sort((a, b) => a.code.localeCompare(b.code));
+                }
+            }
+
+            focusedCardIndex = -1;
+            renderErrors();
+            updateStats();
+            serializeState();
+        }
+
+        // ── Rendering ─────────────────────────────────────
+        function getSeverity(code) {
+            if (/^5\d\d/.test(code) || /error/i.test(code) || /^AADSTS/.test(code) || /^0x8/.test(code)) return 'error';
+            if (/^4\d\d/.test(code) || /warn/i.test(code)) return 'warning';
+            return 'info';
+        }
+
+        function buildCardHtml(e, delay) {
+            const severity = getSeverity(e.code);
+            const resolutionBadge = e.hasResolution
+                ? '<span class="badge badge-resolution">✓ Resolution</span>' : '';
+
+            return '<div class="error-card animate-fade-up" style="animation-delay:' + Math.min(delay, 300) + 'ms" ' +
+                'data-code="' + escapeHtml(e.code) + '" data-product="' + escapeHtml(e.product) + '" ' +
+                'onclick="toggleCard(this)">' +
+                '<svg class="card-expand" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>' +
+                '<div class="card-row">' +
+                '<div class="card-severity severity-' + severity + '"></div>' +
+                '<div class="card-content">' +
+                '<div class="card-header">' +
+                '<span class="card-code">' + escapeHtml(e.code) + '</span>' +
+                '<button class="copy-code-btn" onclick="event.stopPropagation();copyText(\'' + escapeHtml(e.code) + '\')" title="Copy code">Copy</button>' +
+                '<div class="card-badges">' +
+                '<span class="badge badge-product" data-product="' + escapeHtml(e.product) + '">' + escapeHtml(e.product) + '</span>' +
+                '<span class="badge badge-category">' + escapeHtml(e.category) + '</span>' +
+                resolutionBadge +
+                '</div></div>' +
+                '<p class="card-message">' + escapeHtml(e.message) + '</p>' +
+                '</div></div>' +
+                '<div class="card-detail" data-loaded="false"></div>' +
+                '</div>';
+        }
+
+        function renderNextChunk() {
+            const grid = document.getElementById('errorsGrid');
+            const chunk = filteredErrors.slice(renderedCount, renderedCount + CHUNK_SIZE);
+            if (chunk.length === 0) return;
+            const html = chunk.map((e, i) => buildCardHtml(e, i * 12)).join('');
+            grid.insertAdjacentHTML('beforeend', html);
+            renderedCount += chunk.length;
+            if (renderedCount >= filteredErrors.length) {
+                const sentinel = document.getElementById('scrollSentinel');
+                if (scrollObserver && sentinel) scrollObserver.unobserve(sentinel);
+            }
+        }
+
+        function renderErrors() {
+            const grid = document.getElementById('errorsGrid');
+            const noResults = document.getElementById('noResults');
+            if (filteredErrors.length === 0) {
+                grid.style.display = 'none';
+                noResults.style.display = 'block';
+                return;
+            }
+            grid.style.display = '';
+            noResults.style.display = 'none';
+            renderedCount = 0;
+            grid.innerHTML = '';
+            renderNextChunk();
+            setupScrollObserver();
+        }
+
+        function setupScrollObserver() {
+            if (scrollObserver) scrollObserver.disconnect();
+            const sentinel = document.getElementById('scrollSentinel');
+            scrollObserver = new IntersectionObserver(entries => {
+                if (entries[0].isIntersecting && renderedCount < filteredErrors.length) renderNextChunk();
+            }, { rootMargin: '200px' });
+            if (sentinel) scrollObserver.observe(sentinel);
+        }
+
+        function updateStats() {
+            document.getElementById('filteredCount').textContent = filteredErrors.length.toLocaleString();
+            const note = document.getElementById('filterNote');
+            if (filteredErrors.length < allErrors.length) {
+                note.textContent = ' of ' + allErrors.length.toLocaleString();
+            } else {
+                note.textContent = '';
+            }
+        }
+
+        // ── Card expand / detail loading ──────────────────
+        async function toggleCard(card) {
+            const wasExpanded = card.classList.contains('expanded');
+            // Collapse all others
+            document.querySelectorAll('.error-card.expanded').forEach(c => {
+                if (c !== card) c.classList.remove('expanded');
+            });
+            card.classList.toggle('expanded');
+
+            if (!wasExpanded) {
+                const detail = card.querySelector('.card-detail');
+                if (detail && detail.dataset.loaded === 'false') {
+                    await populateDetail(card);
+                }
+            }
+        }
+
+        async function populateDetail(card) {
+            const detail = card.querySelector('.card-detail');
+            const code = card.dataset.code;
+            const product = card.dataset.product;
+
+            detail.innerHTML = '<div class="spinner"></div>';
+
+            const productData = await loadProductDetail(product);
+            if (!productData || !productData.errors || !productData.errors[code]) {
+                detail.innerHTML = '<p style="font-size:0.78rem;color:var(--text-tertiary);padding:4px 0">No additional details available</p>';
+                detail.dataset.loaded = 'true';
+                return;
+            }
+
+            const err = productData.errors[code];
+            let html = '';
+
+            if (err.description) {
+                html += '<div class="detail-section"><div class="detail-label">Description</div>' +
+                    '<div class="detail-text">' + escapeHtml(err.description) + '</div></div>';
+            }
+
+            if (err.resolution) {
+                html += '<div class="detail-section detail-resolution"><div class="detail-label">Resolution</div>' +
+                    '<div class="detail-text">' + escapeHtml(err.resolution) + '</div></div>';
+            }
+
+            if (err.source_file) {
+                const docUrl = getDocUrl(product, err.source_file);
+                html += '<div class="detail-source">Source: ' +
+                    (docUrl ? '<a href="' + docUrl + '" target="_blank" rel="noopener">' + escapeHtml(err.source_file) + '</a>' :
+                    escapeHtml(err.source_file)) + '</div>';
+            }
+
+            if (!html) html = '<p style="font-size:0.78rem;color:var(--text-tertiary)">No additional details</p>';
+
+            detail.innerHTML = html;
+            detail.dataset.loaded = 'true';
+        }
+
+        function getDocUrl(product, sourceFile) {
+            const repoMap = {
+                'Entra ID': 'https://github.com/MicrosoftDocs/entra-docs/blob/main/',
+                'Microsoft Graph': 'https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/',
+                'Intune': 'https://github.com/MicrosoftDocs/memdocs/blob/main/',
+                'SCCM': 'https://github.com/MicrosoftDocs/memdocs/blob/main/',
+                'Exchange': 'https://github.com/MicrosoftDocs/OfficeDocs-Exchange/blob/main/',
+                'SharePoint': 'https://github.com/MicrosoftDocs/OfficeDocs-SharePoint/blob/main/',
+            };
+            const base = repoMap[product];
+            return base ? base + sourceFile : null;
+        }
+
+        // ── URL state ─────────────────────────────────────
+        function serializeState() {
+            const params = new URLSearchParams();
+            const search = document.getElementById('searchInput').value.trim();
+            if (search) params.set('q', search);
+            const cat = document.getElementById('categoryFilter').value;
+            if (cat) params.set('cat', cat);
+            if (activeProducts.size > 0) params.set('products', [...activeProducts].join(','));
+            const sort = document.getElementById('sortSelect').value;
+            if (sort !== 'relevance') params.set('sort', sort);
+            const hash = params.toString();
+            history.replaceState(null, '', hash ? '#' + hash : window.location.pathname);
+        }
+
+        function restoreState() {
+            const hash = window.location.hash.slice(1);
+            if (!hash) { filterErrors(); return; }
+            const params = new URLSearchParams(hash);
+            if (params.get('q')) document.getElementById('searchInput').value = params.get('q');
+            if (params.get('cat')) document.getElementById('categoryFilter').value = params.get('cat');
+            if (params.get('products')) {
+                params.get('products').split(',').forEach(p => activeProducts.add(p));
+                refreshProductPills();
+            }
+            if (params.get('sort')) document.getElementById('sortSelect').value = params.get('sort');
+            filterErrors();
+        }
+
+        // ── Export ────────────────────────────────────────
+        function exportJSON() {
+            const data = filteredErrors.map(e => ({
+                code: e.code,
+                product: e.product,
+                category: e.category,
+                message: e.message,
+                hasResolution: e.hasResolution,
+            }));
+            downloadFile(JSON.stringify(data, null, 2), 'error-index.json', 'application/json');
+        }
+
+        function exportCSV() {
+            const headers = ['Code', 'Product', 'Category', 'Message', 'Has Resolution'];
+            const rows = filteredErrors.map(e => [
+                '"' + e.code.replace(/"/g, '""') + '"',
+                '"' + e.product.replace(/"/g, '""') + '"',
+                '"' + e.category.replace(/"/g, '""') + '"',
+                '"' + (e.message || '').replace(/"/g, '""') + '"',
+                e.hasResolution ? 'Yes' : 'No',
+            ].join(','));
+            downloadFile(headers.join(',') + '\n' + rows.join('\n'), 'error-index.csv', 'text/csv');
+        }
+
+        function downloadFile(content, filename, mimeType) {
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // ── Clipboard ─────────────────────────────────────
+        async function copyText(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+            } catch (e) {
+                // Fallback
+                const ta = document.createElement('textarea');
+                ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select(); document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+        }
+
+        // ── Theme ─────────────────────────────────────────
+        function toggleTheme() {
+            const isLight = document.documentElement.classList.toggle('light');
+            localStorage.setItem('appearance', isLight ? 'light' : 'dark');
+        }
+
+        // ── Keyboard navigation ───────────────────────────
+        document.addEventListener('keydown', function(e) {
+            if (e.key === '/' && document.activeElement !== document.getElementById('searchInput')) {
+                e.preventDefault();
+                document.getElementById('searchInput').focus();
+                return;
+            }
+            if (e.key === 'Escape') {
+                document.getElementById('searchInput').blur();
+                document.querySelectorAll('.error-card.focused').forEach(c => c.classList.remove('focused'));
+                focusedCardIndex = -1;
+                return;
+            }
+            const cards = document.querySelectorAll('.error-card');
+            if (!cards.length) return;
+
+            if (e.key === 'j' && document.activeElement !== document.getElementById('searchInput')) {
+                e.preventDefault();
+                focusedCardIndex = Math.min(focusedCardIndex + 1, cards.length - 1);
+                updateFocusedCard(cards);
+            } else if (e.key === 'k' && document.activeElement !== document.getElementById('searchInput')) {
+                e.preventDefault();
+                focusedCardIndex = Math.max(focusedCardIndex - 1, 0);
+                updateFocusedCard(cards);
+            } else if (e.key === 'Enter' && focusedCardIndex >= 0 && document.activeElement !== document.getElementById('searchInput')) {
+                e.preventDefault();
+                toggleCard(cards[focusedCardIndex]);
+            }
+        });
+
+        function updateFocusedCard(cards) {
+            cards.forEach(c => c.classList.remove('focused'));
+            if (focusedCardIndex >= 0 && focusedCardIndex < cards.length) {
+                cards[focusedCardIndex].classList.add('focused');
+                cards[focusedCardIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        }
+
+        // ── Init ──────────────────────────────────────────
+        document.getElementById('searchInput').addEventListener('input', debounce(filterErrors, 200));
+
+        loadErrors();
+    </script>
+</body>
+</html>
