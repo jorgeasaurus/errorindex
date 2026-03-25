@@ -1050,10 +1050,12 @@
             const err = productData.errors[code];
             let html = '';
 
-            if (err.description) {
+            // Show description, or fall back to full message if description is empty
+            const descText = err.description || err.message;
+            if (descText) {
                 html += '<div class="detail-section">' +
-                    '<div class="detail-label"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Description</div>' +
-                    '<div class="detail-text">' + escapeHtml(err.description) + '</div></div>';
+                    '<div class="detail-label"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>' + (err.description ? 'Description' : 'Details') + '</div>' +
+                    '<div class="detail-text">' + escapeHtml(descText) + '</div></div>';
             }
 
             if (err.resolution) {
@@ -1062,7 +1064,7 @@
                     '<div class="detail-text">' + escapeHtml(err.resolution) + '</div></div>';
             }
 
-            if (!err.description && !err.resolution) {
+            if (!descText && !err.resolution) {
                 html += '<p style="font-size:0.78rem;color:var(--text-tertiary)">No additional details</p>';
             }
 

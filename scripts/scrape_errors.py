@@ -664,7 +664,83 @@ PARSERS = {
 }
 
 
-# ── Deduplication ─────────────────────────────────────────────────────────────
+# ── Validation & Deduplication ────────────────────────────────────────────────
+
+# Pattern: looks like an actual error code, not a sentence
+_CODE_PATTERNS = re.compile(
+    r"^("
+    r"AADSTS\d+|"                          # Entra: AADSTS50001
+    r"0x[0-9a-fA-F]+|"                     # Hex: 0x80cf0001
+    r"-?\d{5,}|"                           # Numeric: -2147024891
+    r"[A-Z][A-Z0-9_]{2,}|"                # Symbolic: ERROR_SUCCESS
+    r"\d{3}|"                              # HTTP: 401, 403, 500
+    r"[45]\.\d+\.\d+|"                     # NDR: 5.1.1
+    r"[A-Z]{2,}\d+|"                       # Mixed: MP_E_INVALID_CONTENT
+    r"HR[A-Z_]+|"                          # HRESULT aliases
+    r"\d+(\s*,\s*0x[0-9a-fA-F]+)?"        # SCCM: -2147418113, 0x8000ffff
+    r")$"
+)
+
+
+def normalize_error_code(entry: dict) -> dict:
+    """Clean up error code field: split 'AADSTS123: message' patterns, reject non-codes."""
+    code = entry["code"].strip().strip('"').strip("'")
+
+    # Split "AADSTS123456: Some message text" into code + message
+    m = re.match(r"^(AADSTS\d+)\s*[:]\s*(.+)", code, re.DOTALL)
+    if m:
+        code = m.group(1)
+        # Prepend the split-off text to message if message is empty
+        if not entry.get("message"):
+            entry["message"] = m.group(2).strip()[:300]
+        elif m.group(2).strip() not in entry["message"]:
+            entry["message"] = m.group(2).strip()[:150] + " " + entry["message"]
+
+    entry["code"] = code
+    return entry
+
+
+def is_valid_error_code(code: str) -> bool:
+    """Reject entries where 'code' is actually a sentence or message."""
+    if not code or len(code) > 60:
+        return False
+    # Reject if it looks like a sentence (starts with quote, or has many spaces)
+    if code.startswith('"') or code.startswith("'") or code.startswith(">"):
+        return False
+    if code.count(" ") > 4:
+        return False
+    # Must match at least one known code pattern
+    # But also allow short alphanumeric codes we might not anticipate
+    clean = code.split(",")[0].strip()  # handle "123, 0x..." format
+    if _CODE_PATTERNS.match(clean):
+        return True
+    # Allow any code that's short and doesn't look like natural language
+    if len(code) <= 25 and not any(c in code for c in ".!?") and code[0].isupper():
+        return True
+    return False
+
+
+def is_valid_message(msg: str) -> bool:
+    """Reject entries where the message is clearly garbage (markdown artifacts)."""
+    if not msg:
+        return True  # empty messages are OK, just no content
+    # Reject markdown headings scraped as messages
+    if msg.startswith("#") or msg.startswith("| "):
+        return False
+    # Reject markdown table separator lines
+    if msg.startswith(":---") or msg.startswith("---"):
+        return False
+    # Reject numbered step instructions (not error messages)
+    if re.match(r"^\d+\.\s+(In |Open |Choose |Click |Select |Go to )", msg):
+        return False
+    # Reject code snippets
+    if msg.startswith("``") or msg.startswith("$") or msg.startswith("Example:"):
+        return False
+    # Reject very short non-informative messages
+    if len(msg.strip()) < 3:
+        return False
+    return True
+
 
 def deduplicate(errors: list[dict]) -> list[dict]:
     """Remove duplicate error codes within the same product, keeping the richest entry."""
@@ -727,12 +803,20 @@ def main():
     if workdir.exists():
         subprocess.run(["rm", "-rf", str(workdir)], check=False)
 
-    # Deduplicate per product, write per-product files, collect all
+    # Normalize, validate, deduplicate per product
     all_errors = []
     product_names = sorted(product_errors.keys())
 
     for product in product_names:
-        errors = deduplicate(product_errors[product])
+        raw = product_errors[product]
+        # Normalize codes (split AADSTS123: message, strip quotes)
+        normalized = [normalize_error_code(e) for e in raw]
+        # Filter out invalid codes (sentences, empty, too long) and garbage messages
+        valid = [e for e in normalized if is_valid_error_code(e["code"]) and is_valid_message(e.get("message", ""))]
+        rejected = len(raw) - len(valid)
+        if rejected:
+            print(f"  {product}: rejected {rejected} invalid codes")
+        errors = deduplicate(valid)
         product_slug = product.lower().replace(" ", "-")
         product_data = {
             "product": product,
