@@ -54,7 +54,6 @@
             --product-intune: #3fb950;
             --product-sccm: #d29922;
             --product-exchange: #f78166;
-            --product-sharepoint: #39d2c0;
         }
 
         :root.light {
@@ -293,13 +292,11 @@
         .product-pill[data-product="Intune"].active { background: var(--product-intune); color: #fff; }
         .product-pill[data-product="SCCM"].active { background: var(--product-sccm); color: #fff; }
         .product-pill[data-product="Exchange"].active { background: var(--product-exchange); }
-        .product-pill[data-product="SharePoint"].active { background: var(--product-sharepoint); color: #fff; }
         .product-pill[data-product="Entra ID"] .pill-dot { background: var(--product-entra); }
         .product-pill[data-product="Microsoft Graph"] .pill-dot { background: var(--product-graph); }
         .product-pill[data-product="Intune"] .pill-dot { background: var(--product-intune); }
         .product-pill[data-product="SCCM"] .pill-dot { background: var(--product-sccm); }
         .product-pill[data-product="Exchange"] .pill-dot { background: var(--product-exchange); }
-        .product-pill[data-product="SharePoint"] .pill-dot { background: var(--product-sharepoint); }
 
         /* ── Stats bar ──────────────────────────────────── */
         .stats-bar {
@@ -408,7 +405,6 @@
         .badge-product[data-product="Intune"] { background: var(--product-intune); }
         .badge-product[data-product="SCCM"] { background: var(--product-sccm); }
         .badge-product[data-product="Exchange"] { background: var(--product-exchange); }
-        .badge-product[data-product="SharePoint"] { background: var(--product-sharepoint); }
         .badge-category {
             background: var(--bg-inset);
             border: 1px solid var(--border-default);
@@ -741,7 +737,7 @@
                 productCounts[e.product] = (productCounts[e.product] || 0) + 1;
             });
             const pf = document.getElementById('productFilters');
-            const productOrder = ['Entra ID', 'Microsoft Graph', 'Intune', 'SCCM', 'Exchange', 'SharePoint'];
+            const productOrder = ['Entra ID', 'Microsoft Graph', 'Intune', 'SCCM', 'Exchange'];
             pf.innerHTML = '<button class="product-pill active" data-product="all">' +
                 '<span class="pill-dot" style="background:var(--text-tertiary)"></span>All' +
                 '<span class="pill-count">' + allErrors.length + '</span></button>' +
@@ -995,8 +991,7 @@
                 'Microsoft Graph': 'https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/',
                 'Intune': 'https://github.com/MicrosoftDocs/memdocs/blob/main/',
                 'SCCM': 'https://github.com/MicrosoftDocs/memdocs/blob/main/',
-                'Exchange': 'https://github.com/MicrosoftDocs/OfficeDocs-Exchange/blob/main/',
-                'SharePoint': 'https://github.com/MicrosoftDocs/OfficeDocs-SharePoint/blob/main/',
+                'Exchange': 'https://github.com/MicrosoftDocs/SupportArticles-docs/blob/main/',
             };
             const base = repoMap[product];
             return base ? base + sourceFile : null;

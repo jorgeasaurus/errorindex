@@ -39,6 +39,15 @@ SOURCES = [
         "parser": "parse_entra",
     },
     {
+        "product": "Entra ID",
+        "repo": "https://github.com/MicrosoftDocs/SupportArticles-docs.git",
+        "sparse_paths": [
+            "support/entra",
+        ],
+        "parser": "parse_entra",
+        "tag": "support",
+    },
+    {
         "product": "Microsoft Graph",
         "repo": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib.git",
         "sparse_paths": [
@@ -51,33 +60,44 @@ SOURCES = [
         "product": "Intune",
         "repo": "https://github.com/MicrosoftDocs/memdocs.git",
         "sparse_paths": [
-            "memdocs/intune",
+            "intune",
         ],
         "parser": "parse_intune",
+    },
+    {
+        "product": "Intune",
+        "repo": "https://github.com/MicrosoftDocs/SupportArticles-docs.git",
+        "sparse_paths": [
+            "support/mem/intune",
+        ],
+        "parser": "parse_intune",
+        "tag": "support",
     },
     {
         "product": "SCCM",
         "repo": "https://github.com/MicrosoftDocs/memdocs.git",
         "sparse_paths": [
-            "memdocs/configmgr",
+            "configmgr",
         ],
         "parser": "parse_sccm",
     },
     {
-        "product": "Exchange",
-        "repo": "https://github.com/MicrosoftDocs/OfficeDocs-Exchange.git",
+        "product": "SCCM",
+        "repo": "https://github.com/MicrosoftDocs/SupportArticles-docs.git",
         "sparse_paths": [
-            "Exchange",
+            "support/mem/configmgr",
         ],
-        "parser": "parse_exchange",
+        "parser": "parse_sccm",
+        "tag": "support",
     },
     {
-        "product": "SharePoint",
-        "repo": "https://github.com/MicrosoftDocs/OfficeDocs-SharePoint.git",
+        "product": "Exchange",
+        "repo": "https://github.com/MicrosoftDocs/SupportArticles-docs.git",
         "sparse_paths": [
-            "SharePoint",
+            "support/azure",
         ],
-        "parser": "parse_sharepoint",
+        "parser": "parse_exchange",
+        "tag": "support-azure",
     },
 ]
 
@@ -122,37 +142,43 @@ def extract_section(text: str, heading: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def parse_md_table(text: str) -> list[dict]:
-    """Parse a markdown table into a list of dicts keyed by header names."""
-    rows = []
-    lines = text.strip().splitlines()
-    header_line = None
-    header_idx = -1
-    for i, line in enumerate(lines):
-        stripped = line.strip()
+def parse_md_tables(text: str) -> list[list[dict]]:
+    """Parse ALL markdown tables in text. Returns list of tables, each a list of row dicts."""
+    tables = []
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
         if stripped.startswith("|") and "|" in stripped[1:]:
-            # Check if next line is separator
             if i + 1 < len(lines) and re.match(r"^\|[\s\-:|]+\|$", lines[i + 1].strip()):
-                header_line = stripped
-                header_idx = i
-                break
+                headers = [h.strip().lower() for h in stripped.split("|")[1:-1]]
+                rows = []
+                j = i + 2
+                while j < len(lines):
+                    row_line = lines[j].strip()
+                    if not row_line.startswith("|"):
+                        break
+                    cells = [c.strip() for c in row_line.split("|")[1:-1]]
+                    if len(cells) >= len(headers):
+                        row = {}
+                        for k, h in enumerate(headers):
+                            row[h] = clean_md_text(cells[k]) if k < len(cells) else ""
+                        rows.append(row)
+                    j += 1
+                if rows:
+                    tables.append(rows)
+                i = j
+                continue
+        i += 1
+    return tables
 
-    if header_line is None:
-        return rows
 
-    headers = [h.strip().lower() for h in header_line.split("|")[1:-1]]
-
-    for line in lines[header_idx + 2:]:
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            break
-        cells = [c.strip() for c in stripped.split("|")[1:-1]]
-        if len(cells) >= len(headers):
-            row = {}
-            for j, h in enumerate(headers):
-                row[h] = cells[j] if j < len(cells) else ""
-            rows.append(row)
-
+def parse_md_table(text: str) -> list[dict]:
+    """Parse all markdown tables in text, returning all rows flattened."""
+    tables = parse_md_tables(text)
+    rows = []
+    for table in tables:
+        rows.extend(table)
     return rows
 
 
@@ -164,10 +190,14 @@ def find_md_files(base_dir: Path, pattern: str = "**/*.md") -> list[Path]:
 def clean_md_text(text: str) -> str:
     """Strip markdown formatting for plain-text output."""
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # links
+    text = re.sub(r"\*\*`([^`]+)`\*\*", r"\1", text)  # bold+code combo
     text = re.sub(r"`([^`]+)`", r"\1", text)  # inline code
     text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)  # bold
+    text = re.sub(r"__([^_]+)__", r"\1", text)  # bold (underscore)
     text = re.sub(r"\*([^*]+)\*", r"\1", text)  # italic
+    text = re.sub(r"<br\s*/?>", " ", text)  # line breaks
     text = re.sub(r"<[^>]+>", "", text)  # HTML tags
+    text = re.sub(r"\s+", " ", text)  # collapse whitespace
     return text.strip()
 
 
@@ -370,44 +400,66 @@ def parse_intune(repo_dir: Path) -> list[dict]:
 
         rel_path = str(md_file.relative_to(repo_dir))
 
-        # Parse error tables
-        table_rows = parse_md_table(text)
-        for row in table_rows:
-            code = ""
-            message = ""
-            description = ""
-            resolution = ""
+        # Parse all tables in the file
+        tables = parse_md_tables(text)
+        for table_rows in tables:
+            if not table_rows:
+                continue
+            headers = set(table_rows[0].keys())
 
-            for key in row:
-                val = row[key]
-                if not val:
-                    continue
-                k = key.lower()
-                if any(x in k for x in ("error code", "code", "error", "hex", "decimal", "status")):
-                    if not code:
-                        code = clean_md_text(val)
-                elif any(x in k for x in ("cause", "reason", "description", "message", "error message")):
-                    if not message:
-                        message = clean_md_text(val)
-                    elif not description:
-                        description = clean_md_text(val)
-                elif any(x in k for x in ("resolution", "solution", "fix", "remediation", "troubleshoot", "action")):
-                    resolution = clean_md_text(val)
+            for row in table_rows:
+                code = ""
+                message = ""
+                description = ""
+                resolution = ""
 
-            if code and len(code) > 1:
-                category = categorize_intune_error(code, rel_path)
-                errors.append({
-                    "code": code,
-                    "category": category,
-                    "message": message[:300],
-                    "description": description[:500],
-                    "resolution": resolution[:500],
-                    "source_file": rel_path,
-                })
+                for key in row:
+                    val = row[key]
+                    if not val:
+                        continue
+                    k = key.lower()
+
+                    # Code columns
+                    if any(x in k for x in ("hexadecimal error code", "hex error", "hex code")):
+                        code = val
+                    elif k in ("error code", "code", "error") and not code:
+                        code = val
+                    elif k in ("status code", "status") and not code:
+                        code = val
+                    # Symbolic name (secondary code info)
+                    elif k in ("symbolic name",):
+                        if not description:
+                            description = val
+                    # Message columns
+                    elif any(x in k for x in ("error message", "message", "more information",
+                                                "what to do", "what you should try")):
+                        if not message:
+                            message = val
+                        elif not resolution:
+                            resolution = val
+                    elif any(x in k for x in ("description", "cause", "reason", "details")):
+                        if not message:
+                            message = val
+                        elif not description:
+                            description = val
+                    elif any(x in k for x in ("resolution", "solution", "fix", "remediation",
+                                                "troubleshoot", "action", "mitigation")):
+                        resolution = val
+
+                if code and len(code) > 1 and code.lower() not in ("n/a", "none", "no status"):
+                    category = categorize_intune_error(code, rel_path)
+                    errors.append({
+                        "code": code,
+                        "category": category,
+                        "message": message[:300],
+                        "description": description[:500],
+                        "resolution": resolution[:500],
+                        "source_file": rel_path,
+                    })
 
         # Extract hex error codes from headings (0x8...)
         if "0x8" in text or "0x0" in text:
-            blocks = extract_error_blocks(text, r"0x[0-9A-Fa-f]{6,8}")
+            blocks = extract_error_blocks(text, r"0x[0-9A-Fa-f]{6,10}")
             for block in blocks:
                 if not any(e["code"] == block["code"] for e in errors):
                     errors.append({
@@ -520,17 +572,21 @@ def categorize_sccm_error(path: str) -> str:
 
 
 def parse_exchange(repo_dir: Path) -> list[dict]:
-    """Parse Exchange error codes — NDRs, mail flow, connectivity."""
+    """Parse Exchange/mail-related error codes from SupportArticles and docs."""
     errors = []
 
     for md_file in find_md_files(repo_dir):
         text = read_md(md_file)
         if not text:
             continue
+        # Only process files that mention exchange, mail, or NDR
+        text_lower = text.lower()
+        if not any(kw in text_lower for kw in ("exchange", "mail", "ndr", "smtp",
+                                                  "non-delivery", "transport")):
+            continue
 
         rel_path = str(md_file.relative_to(repo_dir))
 
-        # Parse error tables
         table_rows = parse_md_table(text)
         for row in table_rows:
             code = ""
@@ -545,14 +601,14 @@ def parse_exchange(repo_dir: Path) -> list[dict]:
                 k = key.lower()
                 if any(x in k for x in ("error", "code", "ndr", "status", "enhanced status")):
                     if not code:
-                        code = clean_md_text(val)
+                        code = val
                 elif any(x in k for x in ("description", "message", "cause", "reason")):
                     if not message:
-                        message = clean_md_text(val)
+                        message = val
                     elif not description:
-                        description = clean_md_text(val)
+                        description = val
                 elif any(x in k for x in ("resolution", "solution", "fix", "action")):
-                    resolution = clean_md_text(val)
+                    resolution = val
 
             if code and len(code) > 1:
                 errors.append({
@@ -597,72 +653,6 @@ def categorize_exchange_error(code: str, path: str) -> str:
     return "General"
 
 
-def parse_sharepoint(repo_dir: Path) -> list[dict]:
-    """Parse SharePoint error codes."""
-    errors = []
-
-    for md_file in find_md_files(repo_dir):
-        text = read_md(md_file)
-        if not text:
-            continue
-
-        rel_path = str(md_file.relative_to(repo_dir))
-
-        # Parse error tables
-        table_rows = parse_md_table(text)
-        for row in table_rows:
-            code = ""
-            message = ""
-            description = ""
-            resolution = ""
-
-            for key in row:
-                val = row[key]
-                if not val:
-                    continue
-                k = key.lower()
-                if any(x in k for x in ("error", "code", "status", "id")):
-                    if not code:
-                        code = clean_md_text(val)
-                elif any(x in k for x in ("description", "message", "cause", "reason")):
-                    if not message:
-                        message = clean_md_text(val)
-                    elif not description:
-                        description = clean_md_text(val)
-                elif any(x in k for x in ("resolution", "solution", "fix", "action")):
-                    resolution = clean_md_text(val)
-
-            if code and len(code) > 1:
-                errors.append({
-                    "code": code,
-                    "category": categorize_sharepoint_error(rel_path),
-                    "message": message[:300],
-                    "description": description[:500],
-                    "resolution": resolution[:500],
-                    "source_file": rel_path,
-                })
-
-    print(f"  SharePoint: {len(errors)} errors")
-    return errors
-
-
-def categorize_sharepoint_error(path: str) -> str:
-    p = path.lower()
-    if "api" in p or "rest" in p:
-        return "API"
-    if "site" in p:
-        return "Sites"
-    if "migration" in p or "move" in p:
-        return "Migration"
-    if "sync" in p or "onedrive" in p:
-        return "Sync"
-    if "search" in p:
-        return "Search"
-    if "permission" in p or "access" in p or "sharing" in p:
-        return "Permissions"
-    return "General"
-
-
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
 PARSERS = {
@@ -671,7 +661,6 @@ PARSERS = {
     "parse_intune": parse_intune,
     "parse_sccm": parse_sccm,
     "parse_exchange": parse_exchange,
-    "parse_sharepoint": parse_sharepoint,
 }
 
 
@@ -701,31 +690,49 @@ def main():
 
     PRODUCTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    all_errors = []
-    product_names = []
+    # Collect errors per product from all sources
+    product_errors: dict[str, list[dict]] = defaultdict(list)
+    cloned_repos: dict[str, Path] = {}  # repo_url+tag -> local path
 
     for source in SOURCES:
         product = source["product"]
-        product_names.append(product)
+        tag = source.get("tag", "")
+        repo_key = source["repo"] + "::" + tag
         print(f"\n{'─' * 60}")
-        print(f"Processing: {product}")
+        print(f"Processing: {product}" + (f" ({tag})" if tag else ""))
         print(f"  Repo: {source['repo']}")
 
-        dest = workdir / product.lower().replace(" ", "_")
-        ok = clone_sparse(source["repo"], dest, source["sparse_paths"])
-        if not ok:
-            print(f"  Skipping {product} (clone failed)")
-            continue
+        # Reuse clone if same repo+tag already cloned, else clone fresh
+        if repo_key in cloned_repos:
+            dest = cloned_repos[repo_key]
+        else:
+            slug = product.lower().replace(" ", "_") + ("_" + tag if tag else "")
+            dest = workdir / slug
+            ok = clone_sparse(source["repo"], dest, source["sparse_paths"])
+            if not ok:
+                print(f"  Skipping {product} (clone failed)")
+                continue
+            cloned_repos[repo_key] = dest
 
         parser_fn = PARSERS[source["parser"]]
         errors = parser_fn(dest)
-        errors = deduplicate(errors)
 
         # Tag each error with product
         for e in errors:
             e["product"] = product
 
-        # Write per-product detail file
+        product_errors[product].extend(errors)
+
+    # Clean up all cloned repos
+    if workdir.exists():
+        subprocess.run(["rm", "-rf", str(workdir)], check=False)
+
+    # Deduplicate per product, write per-product files, collect all
+    all_errors = []
+    product_names = sorted(product_errors.keys())
+
+    for product in product_names:
+        errors = deduplicate(product_errors[product])
         product_slug = product.lower().replace(" ", "-")
         product_data = {
             "product": product,
@@ -746,16 +753,8 @@ def main():
             json.dumps(product_data, separators=(",", ":")),
             encoding="utf-8",
         )
-        print(f"  Written: {product_path} ({len(errors)} errors)")
-
+        print(f"  {product}: {len(errors)} errors → {product_path.name}")
         all_errors.extend(errors)
-
-        # Clean up cloned repo
-        subprocess.run(["rm", "-rf", str(dest)], check=False)
-
-    # Clean up workdir
-    if workdir.exists():
-        subprocess.run(["rm", "-rf", str(workdir)], check=False)
 
     # Sort all errors by code
     all_errors.sort(key=lambda e: (e["product"], e["code"]))
