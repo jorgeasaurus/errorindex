@@ -10,3 +10,4 @@ docs_work/
 .playwright-mcp/*.log
 .playwright-mcp/*.png
 .claude/
+scripts/__pycache__/
