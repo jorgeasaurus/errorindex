@@ -22,6 +22,7 @@ import urllib.request
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = SCRIPT_DIR.parent / "public" / "data"
@@ -114,6 +115,11 @@ SOURCES = [
         "product": "Windows Update",
         "url": "https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-error-reference",
         "parser": "parse_windows_update",
+    },
+    {
+        "product": "Intune",
+        "url": "https://tplant.com.au/blog/intune-error-codes/",
+        "parser": "parse_tplant_intune",
     },
 ]
 
@@ -951,6 +957,175 @@ def parse_windows_update(source_path) -> list[dict]:
     return errors
 
 
+# ── tplant.com.au Intune error code parser ────────────────────────────────────
+
+def _categorize_from_heading(heading: str) -> str:
+    """Map a blog section heading to an Intune error category."""
+    h = heading.lower()
+    if any(x in h for x in ("enroll", "registration", "join", "autopilot", "oobe", "hybrid")):
+        return "Enrollment"
+    if any(x in h for x in ("compliance", "noncompliant")):
+        return "Compliance"
+    if any(x in h for x in ("app", "deploy", "install", "package", "win32")):
+        return "App Deployment"
+    if any(x in h for x in ("config", "profile", "policy", "setting")):
+        return "Configuration"
+    if any(x in h for x in ("certificate", "scep", "pkcs", "cert")):
+        return "Certificates"
+    if any(x in h for x in ("vpn", "wifi", "wi-fi", "network", "proxy")):
+        return "Network"
+    return "General"
+
+
+def _strip_html_tags(text: str) -> str:
+    """Remove HTML tags and decode common entities."""
+    text = re.sub(r"<[^>]+>", "", text)
+    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    text = text.replace("&nbsp;", " ").replace("&#39;", "'").replace("&quot;", '"')
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _parse_tplant_html(html: str, source_url: str) -> list[dict]:
+    """Parse error code tables and headings from a tplant.com.au HTML page.
+
+    Handles:
+    - HTML tables with th-based header detection (code / description / resolution)
+    - h2/h3 section headings used for category context
+    - Fallback positional column mapping when no headers are present
+    """
+    errors = []
+    current_category = "General"
+
+    # Split on heading tags to capture per-section category context
+    parts = re.split(r"(<h[23][^>]*>.*?</h[23]>)", html, flags=re.DOTALL | re.IGNORECASE)
+
+    for part in parts:
+        # Update category from heading
+        heading_match = re.match(r"<h[23][^>]*>(.*?)</h[23]>", part, re.DOTALL | re.IGNORECASE)
+        if heading_match:
+            heading_text = _strip_html_tags(heading_match.group(1))
+            if heading_text:
+                current_category = _categorize_from_heading(heading_text)
+            continue
+
+        # Parse all tables in this section
+        table_blocks = re.findall(r"<table[^>]*>(.*?)</table>", part, re.DOTALL | re.IGNORECASE)
+        for table_html in table_blocks:
+            # Detect column semantics from <th> header cells
+            headers_html = re.findall(r"<th[^>]*>(.*?)</th>", table_html, re.DOTALL | re.IGNORECASE)
+            headers = [_strip_html_tags(h).lower() for h in headers_html]
+
+            rows = re.findall(r"<tr[^>]*>(.*?)</tr>", table_html, re.DOTALL | re.IGNORECASE)
+            for row_html in rows:
+                cells_html = re.findall(r"<td[^>]*>(.*?)</td>", row_html, re.DOTALL | re.IGNORECASE)
+                if not cells_html:
+                    continue
+                cells = [clean_md_text(_strip_html_tags(c)) for c in cells_html]
+                if not any(cells):
+                    continue
+
+                code = ""
+                message = ""
+                resolution = ""
+
+                if headers:
+                    for i, h in enumerate(headers):
+                        if i >= len(cells):
+                            break
+                        v = cells[i]
+                        if not v:
+                            continue
+                        if any(x in h for x in ("code", "error", "hex", "number", "#", "id")):
+                            if not code:
+                                code = v
+                        elif any(x in h for x in ("resolution", "fix", "solution", "action",
+                                                   "remediat", "what to do", "steps")):
+                            resolution = v
+                        elif any(x in h for x in ("description", "message", "detail",
+                                                   "cause", "meaning", "reason", "text")):
+                            if not message:
+                                message = v
+                        elif not message and i == 1:
+                            # No recognised header: treat second column as message
+                            message = v
+                else:
+                    # No headers — positional: code, description, [resolution]
+                    code = cells[0]
+                    message = cells[1] if len(cells) > 1 else ""
+                    resolution = cells[2] if len(cells) > 2 else ""
+
+                if not code:
+                    continue
+
+                errors.append({
+                    "code": code,
+                    "category": current_category,
+                    "message": message[:300],   # same limit as the rest of the parsers
+                    "description": "",
+                    "resolution": resolution[:500],  # same limit as the rest of the parsers
+                    "source_file": source_url,
+                })
+
+    return errors
+
+
+def _extract_tplant_links(html: str, base_url: str) -> list[str]:
+    """Return unique same-domain blog-post URLs found in the HTML page."""
+    base_parsed = urlparse(base_url)
+    # Match quoted and unquoted href values
+    raw_links = re.findall(r'href=(?:["\']([^"\']+)["\']|([^\s>]+))', html, re.IGNORECASE)
+    # Each match is a 2-tuple from the two capture groups; take whichever is non-empty
+    result = []
+    seen = {base_url}
+    for quoted, unquoted in raw_links:
+        link = quoted or unquoted
+        if not link or link.startswith(("javascript:", "mailto:", "tel:")):
+            continue
+        full_url = urljoin(base_url, link).split("#")[0]
+        parsed = urlparse(full_url)
+        if (parsed.netloc == base_parsed.netloc
+                and full_url not in seen
+                and "/blog/" in full_url):
+            seen.add(full_url)
+            result.append(full_url)
+    return result
+
+
+def parse_tplant_intune(source_path) -> list[dict]:
+    """Parse Intune error codes from tplant.com.au blog post and linked pages.
+
+    Accepts a URL string. Fetches the main page, parses HTML error tables, then
+    follows any intra-domain /blog/ links to capture related sub-pages.
+    """
+    errors = []
+
+    if not (isinstance(source_path, str) and source_path.startswith("http")):
+        print(f"  Warning: parse_tplant_intune expects an HTTP URL, got: {source_path!r}",
+              file=sys.stderr)
+        return errors
+
+    url = source_path
+    html = fetch_url_text(url)
+    if not html:
+        return errors
+
+    errors.extend(_parse_tplant_html(html, url))
+
+    # Follow links to related blog posts on the same domain
+    visited = {url}
+    for linked_url in _extract_tplant_links(html, url):
+        if linked_url in visited:
+            continue
+        visited.add(linked_url)
+        linked_html = fetch_url_text(linked_url)
+        if linked_html:
+            errors.extend(_parse_tplant_html(linked_html, linked_url))
+
+    print(f"  Intune (tplant): {len(errors)} errors")
+    return errors
+
+
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
 PARSERS = {
@@ -961,6 +1136,7 @@ PARSERS = {
     "parse_exchange": parse_exchange,
     "parse_windows_installer": parse_windows_installer,
     "parse_windows_update": parse_windows_update,
+    "parse_tplant_intune": parse_tplant_intune,
 }
 
 
