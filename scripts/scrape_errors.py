@@ -80,7 +80,7 @@ SOURCES = [
         "product": "SCCM",
         "repo": "https://github.com/MicrosoftDocs/memdocs.git",
         "sparse_paths": [
-            "configmgr",
+            "intune/configmgr",
         ],
         "parser": "parse_sccm",
     },
@@ -477,6 +477,13 @@ def parse_intune(repo_dir: Path) -> list[dict]:
                                                 "troubleshoot", "action", "mitigation")):
                         resolution = val
 
+                # If description is a symbolic name (e.g. OM_S_REBOOT_REQUIRED),
+                # combine it with the actual message to produce a richer entry.
+                if (description and message
+                        and re.match(r'^[A-Z][A-Z0-9_]+$', description)):
+                    message = f"{description} \u2014 {message}"
+                    description = ""
+
                 # If we found dual hex/dec columns, emit entries for both
                 if code_hex or code_dec:
                     if not code:
@@ -566,16 +573,24 @@ def parse_sccm(repo_dir: Path) -> list[dict]:
                 if not val:
                     continue
                 k = key.lower()
-                if any(x in k for x in ("error", "code", "message id", "status", "hex", "decimal")):
-                    if not code:
-                        code = clean_md_text(val)
-                elif any(x in k for x in ("description", "message", "details", "text")):
+                # Check message/description columns FIRST so that columns like
+                # "error description" or "error message" are not misidentified
+                # as code columns due to the word "error".
+                if any(x in k for x in ("description", "message", "details",
+                                         "text", "information")):
                     if not message:
                         message = clean_md_text(val)
                     elif not description:
                         description = clean_md_text(val)
+                elif k in ("symbolic name",):
+                    if not description:
+                        description = clean_md_text(val)
                 elif any(x in k for x in ("resolution", "solution", "action", "fix")):
                     resolution = clean_md_text(val)
+                elif any(x in k for x in ("error", "code", "message id", "status",
+                                           "hex", "decimal")):
+                    if not code:
+                        code = clean_md_text(val)
 
             if code and len(code) > 1:
                 errors.append({
@@ -1277,7 +1292,7 @@ def main():
             product_errors[product].extend(errors)
             continue
 
-        repo_key = source["repo"] + "::" + tag
+        repo_key = source["repo"] + "::" + tag + "::" + "|".join(sorted(source.get("sparse_paths", [])))
         print(f"\n{'─' * 60}")
         print(f"Processing: {product}" + (f" ({tag})" if tag else ""))
         print(f"  Repo: {source['repo']}")
