@@ -13,6 +13,7 @@ The workdir defaults to a temporary 'docs_work' directory that is cleaned up aft
 Uses only Python stdlib — no pip dependencies.
 """
 
+import html as _html
 import json
 import os
 import re
@@ -978,10 +979,11 @@ def _categorize_from_heading(heading: str) -> str:
 
 
 def _strip_html_tags(text: str) -> str:
-    """Remove HTML tags and decode common entities."""
+    """Remove HTML tags and decode HTML entities."""
     text = re.sub(r"<[^>]+>", "", text)
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    text = text.replace("&nbsp;", " ").replace("&#39;", "'").replace("&quot;", '"')
+    # Replace &nbsp; with a regular space before full entity decoding
+    text = text.replace("&nbsp;", " ")
+    text = _html.unescape(text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
@@ -1070,8 +1072,15 @@ def _parse_tplant_html(html: str, source_url: str) -> list[dict]:
     return errors
 
 
+_TPLANT_MAX_PAGES = 20  # safety cap on total pages visited during BFS
+
+
 def _extract_tplant_links(html: str, base_url: str) -> list[str]:
-    """Return unique same-domain blog-post URLs found in the HTML page."""
+    """Return unique same-domain Intune blog-post URLs found in the HTML page.
+
+    Only collects URLs on the same hostname that contain both '/blog/' and
+    'intune' to avoid following unrelated posts in navigation/footer links.
+    """
     base_parsed = urlparse(base_url)
     # Match quoted and unquoted href values
     raw_links = re.findall(r'href=(?:["\']([^"\']+)["\']|([^\s>]+))', html, re.IGNORECASE)
@@ -1086,7 +1095,8 @@ def _extract_tplant_links(html: str, base_url: str) -> list[str]:
         parsed = urlparse(full_url)
         if (parsed.netloc == base_parsed.netloc
                 and full_url not in seen
-                and "/blog/" in full_url):
+                and "/blog/" in full_url
+                and "intune" in full_url.lower()):
             seen.add(full_url)
             result.append(full_url)
     return result
@@ -1095,8 +1105,9 @@ def _extract_tplant_links(html: str, base_url: str) -> list[str]:
 def parse_tplant_intune(source_path) -> list[dict]:
     """Parse Intune error codes from tplant.com.au blog post and linked pages.
 
-    Accepts a URL string. Fetches the main page, parses HTML error tables, then
-    follows any intra-domain /blog/ links to capture related sub-pages.
+    Accepts a URL string. Fetches the seed page, parses HTML error tables, then
+    performs a BFS over intra-domain Intune /blog/ links found on every visited
+    page up to _TPLANT_MAX_PAGES total pages.
     """
     errors = []
 
@@ -1105,24 +1116,27 @@ def parse_tplant_intune(source_path) -> list[dict]:
               file=sys.stderr)
         return errors
 
-    url = source_path
-    html = fetch_url_text(url)
-    if not html:
-        return errors
+    visited: set[str] = set()
+    queue: list[str] = [source_path]
 
-    errors.extend(_parse_tplant_html(html, url))
-
-    # Follow links to related blog posts on the same domain
-    visited = {url}
-    for linked_url in _extract_tplant_links(html, url):
-        if linked_url in visited:
+    while queue and len(visited) < _TPLANT_MAX_PAGES:
+        url = queue.pop(0)
+        if url in visited:
             continue
-        visited.add(linked_url)
-        linked_html = fetch_url_text(linked_url)
-        if linked_html:
-            errors.extend(_parse_tplant_html(linked_html, linked_url))
+        visited.add(url)
 
-    print(f"  Intune (tplant): {len(errors)} errors")
+        page_html = fetch_url_text(url)
+        if not page_html:
+            continue
+
+        errors.extend(_parse_tplant_html(page_html, url))
+
+        # Enqueue new links found on this page (BFS)
+        for linked_url in _extract_tplant_links(page_html, url):
+            if linked_url not in visited:
+                queue.append(linked_url)
+
+    print(f"  Intune (tplant): {len(errors)} errors ({len(visited)} page(s) fetched)")
     return errors
 
 
