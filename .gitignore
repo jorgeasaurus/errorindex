@@ -9,3 +9,4 @@ event.json
 docs_work/
 .playwright-mcp/*.log
 .playwright-mcp/*.png
+.claude/
