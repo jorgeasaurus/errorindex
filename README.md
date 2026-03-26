@@ -1,6 +1,8 @@
 # Microsoft Error Index
 
-Searchable reference for error codes across Microsoft products — Entra ID, Graph, Intune, SCCM, Exchange, SharePoint. Static site with no backend, no framework, no build step.
+Searchable reference for error codes across Microsoft products — Entra ID, Graph, Intune, SCCM, Exchange, Windows Installer, Windows Update. Static site with no backend, no framework, no build step.
+
+🔗 **Live site:** [jorgeasaurus.github.io/errorindex](https://jorgeasaurus.github.io/errorindex)
 
 Deployed to GitHub Pages. Data updated daily via GitHub Actions.
 
@@ -35,12 +37,13 @@ The scraper uses Python stdlib only — no pip dependencies.
 
 | Product | Source Repo | Error Types |
 |---------|-------------|-------------|
-| Entra ID | MicrosoftDocs/entra-docs | AADSTS codes, Conditional Access |
+| Entra ID | MicrosoftDocs/entra-docs, SupportArticles-docs | AADSTS codes, Conditional Access |
 | Microsoft Graph | microsoftgraph/microsoft-graph-docs-contrib | API errors, HTTP status codes |
-| Intune | MicrosoftDocs/memdocs | Enrollment, compliance, app deployment |
-| SCCM | MicrosoftDocs/memdocs | Client, OSD, software updates |
-| Exchange | MicrosoftDocs/OfficeDocs-Exchange | NDRs, mail flow, connectivity |
-| SharePoint | MicrosoftDocs/OfficeDocs-SharePoint | API, sites, migration, sync |
+| Intune | MicrosoftDocs/memdocs, SupportArticles-docs | Enrollment, compliance, app deployment |
+| SCCM | MicrosoftDocs/memdocs, SupportArticles-docs | Client, OSD, software updates |
+| Exchange | MicrosoftDocs/SupportArticles-docs | NDRs, mail flow, connectivity |
+| Windows Installer | MicrosoftDocs/win32 | MSI return codes (0, 1603, 3010, etc.) |
+| Windows Update | MicrosoftDocs/windows-itpro-docs | WU_E_* hex error codes |
 
 ## Key Features
 

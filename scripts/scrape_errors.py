@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -95,9 +96,24 @@ SOURCES = [
         "repo": "https://github.com/MicrosoftDocs/SupportArticles-docs.git",
         "sparse_paths": [
             "support/azure",
+            "support/exchange-online",
+            "support/exchange",
         ],
         "parser": "parse_exchange",
         "tag": "support-azure",
+    },
+    {
+        "product": "Windows Installer",
+        "repo": "https://github.com/MicrosoftDocs/win32.git",
+        "sparse_paths": [
+            "desktop-src/Msi",
+        ],
+        "parser": "parse_windows_installer",
+    },
+    {
+        "product": "Windows Update",
+        "url": "https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-error-reference",
+        "parser": "parse_windows_update",
     },
 ]
 
@@ -195,6 +211,7 @@ def clean_md_text(text: str) -> str:
     text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)  # bold
     text = re.sub(r"__([^_]+)__", r"\1", text)  # bold (underscore)
     text = re.sub(r"\*([^*]+)\*", r"\1", text)  # italic
+    text = text.replace("\\_", "_")  # escaped underscores
     text = re.sub(r"<br\s*/?>", " ", text)  # line breaks
     text = re.sub(r"<[^>]+>", "", text)  # HTML tags
     text = re.sub(r"\s+", " ", text)  # collapse whitespace
@@ -409,6 +426,8 @@ def parse_intune(repo_dir: Path) -> list[dict]:
 
             for row in table_rows:
                 code = ""
+                code_hex = ""
+                code_dec = ""
                 message = ""
                 description = ""
                 resolution = ""
@@ -419,9 +438,14 @@ def parse_intune(repo_dir: Path) -> list[dict]:
                         continue
                     k = key.lower()
 
+                    # Dual-code columns: "Error code (Hex)" / "Error code (Dec)"
+                    if "hex" in k and ("error" in k or "code" in k):
+                        code_hex = clean_md_text(val)
+                    elif "dec" in k and ("error" in k or "code" in k):
+                        code_dec = clean_md_text(val)
                     # Code columns
-                    if any(x in k for x in ("hexadecimal error code", "hex error", "hex code")):
-                        code = val
+                    elif any(x in k for x in ("hexadecimal error code", "hex error", "hex code")):
+                        code_hex = clean_md_text(val) if not code_hex else code_hex
                     elif k in ("error code", "code", "error") and not code:
                         code = val
                     elif k in ("status code", "status") and not code:
@@ -446,7 +470,25 @@ def parse_intune(repo_dir: Path) -> list[dict]:
                                                 "troubleshoot", "action", "mitigation")):
                         resolution = val
 
-                if code and len(code) > 1 and code.lower() not in ("n/a", "none", "no status"):
+                # If we found dual hex/dec columns, emit entries for both
+                if code_hex or code_dec:
+                    if not code:
+                        code = code_hex or code_dec
+                    category = categorize_intune_error(code_hex or code_dec or code, rel_path)
+                    base = {
+                        "category": category,
+                        "message": message[:300],
+                        "description": description[:500],
+                        "resolution": resolution[:500],
+                        "source_file": rel_path,
+                    }
+                    if code_hex and code_hex.lower() not in ("n/a", "none", "no status"):
+                        errors.append({**base, "code": code_hex})
+                    if code_dec and code_dec.lower() not in ("n/a", "none", "no status") and code_dec != code_hex:
+                        errors.append({**base, "code": code_dec})
+                    if code and code != code_hex and code != code_dec:
+                        errors.append({**base, "code": code})
+                elif code and len(code) > 1 and code.lower() not in ("n/a", "none", "no status"):
                     category = categorize_intune_error(code, rel_path)
                     errors.append({
                         "code": code,
@@ -653,6 +695,262 @@ def categorize_exchange_error(code: str, path: str) -> str:
     return "General"
 
 
+def parse_windows_installer(repo_dir: Path) -> list[dict]:
+    """Parse Windows Installer / MSI error codes from win32 docs.
+
+    Creates two entries per error: one keyed by numeric value (e.g. '3010')
+    and one keyed by symbolic name (e.g. 'ERROR_SUCCESS_REBOOT_REQUIRED').
+    """
+    errors = []
+
+    for md_file in find_md_files(repo_dir):
+        text = read_md(md_file)
+        if not text:
+            continue
+
+        rel_path = str(md_file.relative_to(repo_dir))
+
+        table_rows = parse_md_table(text)
+        for row in table_rows:
+            name = ""
+            value = ""
+            description = ""
+
+            for key in row:
+                val = row[key]
+                if not val:
+                    continue
+                k = key.lower()
+                if any(x in k for x in ("name", "error", "constant")):
+                    name = clean_md_text(val)
+                elif any(x in k for x in ("value", "code", "decimal", "number")):
+                    value = clean_md_text(val)
+                elif any(x in k for x in ("description", "message", "meaning")):
+                    description = clean_md_text(val)
+
+            if not name and not value:
+                continue
+
+            # Clean the numeric value — strip trailing L, spaces
+            if value:
+                value = re.sub(r"[Ll]$", "", value.strip())
+
+            # Build a combined message for the numeric code entry
+            if name and description:
+                combined_msg = f"{name} \u2014 {description}"
+            elif description:
+                combined_msg = description
+            elif name:
+                combined_msg = name
+            else:
+                combined_msg = ""
+
+            # Entry keyed by numeric value (e.g. "3010")
+            if value and re.match(r"^\d+$", value):
+                errors.append({
+                    "code": value,
+                    "category": "MSI Return Code",
+                    "message": combined_msg[:300],
+                    "description": description[:500],
+                    "resolution": "",
+                    "source_file": rel_path,
+                })
+
+            # Entry keyed by symbolic name (e.g. "ERROR_SUCCESS_REBOOT_REQUIRED")
+            if name and re.match(r"^[A-Z][A-Z0-9_]+$", name):
+                sym_msg = description if description else ""
+                if value:
+                    sym_msg = f"({value}) {sym_msg}".strip()
+                errors.append({
+                    "code": name,
+                    "category": "MSI Return Code",
+                    "message": sym_msg[:300],
+                    "description": description[:500],
+                    "resolution": "",
+                    "source_file": rel_path,
+                })
+
+    print(f"  Windows Installer: {len(errors)} errors")
+    return errors
+
+
+def fetch_url_text(url: str) -> str:
+    """Fetch a URL and return the body as text. Returns empty string on failure."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ErrorIndex-Scraper/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        print(f"  Warning: Fetch failed for {url}: {e}", file=sys.stderr)
+        return ""
+
+
+def _parse_wu_from_html(html: str) -> list[dict]:
+    """Parse Windows Update error codes from learn.microsoft.com HTML page.
+
+    The page has h2 section headings and tables with columns:
+    Error code | Message (symbolic name) | Description
+    """
+    errors = []
+    source = "windows-update-error-reference"
+    current_category = "General"
+
+    sections = re.split(r"<h2[^>]*>", html)
+    for section in sections:
+        heading_match = re.match(r"([^<]+)</h2>", section)
+        if heading_match:
+            current_category = clean_md_text(heading_match.group(1).strip())
+
+        table_blocks = re.findall(r"<table[^>]*>(.*?)</table>", section, re.DOTALL)
+        for table_html in table_blocks:
+            rows = re.findall(r"<tr[^>]*>(.*?)</tr>", table_html, re.DOTALL)
+            for row_html in rows:
+                cells = re.findall(r"<td[^>]*>(.*?)</td>", row_html, re.DOTALL)
+                if len(cells) < 2:
+                    continue
+
+                code = clean_md_text(re.sub(r"<[^>]+>", "", cells[0]))
+                sym_name = clean_md_text(re.sub(r"<[^>]+>", "", cells[1])) if len(cells) > 1 else ""
+                description = clean_md_text(re.sub(r"<[^>]+>", "", cells[2])) if len(cells) > 2 else ""
+
+                if not code or not re.match(r"^0x[0-9a-fA-F]+$", code):
+                    continue
+
+                if sym_name and description:
+                    combined_msg = f"{sym_name} \u2014 {description}"
+                elif sym_name:
+                    combined_msg = sym_name
+                elif description:
+                    combined_msg = description
+                else:
+                    combined_msg = ""
+
+                errors.append({
+                    "code": code.upper().replace("0X", "0x"),
+                    "category": current_category,
+                    "message": combined_msg[:300],
+                    "description": description[:500],
+                    "resolution": "",
+                    "source_file": source,
+                })
+
+                if sym_name and re.match(r"^[A-Z][A-Z0-9_]+$", sym_name):
+                    sym_msg = description if description else ""
+                    if code:
+                        sym_msg = f"({code}) {sym_msg}".strip()
+                    errors.append({
+                        "code": sym_name,
+                        "category": current_category,
+                        "message": sym_msg[:300],
+                        "description": description[:500],
+                        "resolution": "",
+                        "source_file": source,
+                    })
+
+    return errors
+
+
+def _parse_wu_from_md(text: str, source_file: str) -> list[dict]:
+    """Parse WU error codes from markdown text content."""
+    errors = []
+    tables = parse_md_tables(text)
+    for table_rows in tables:
+        if not table_rows:
+            continue
+        for row in table_rows:
+            code = ""
+            sym_name = ""
+            message = ""
+            description = ""
+            for key in row:
+                val = row[key]
+                if not val:
+                    continue
+                k = key.lower()
+                if any(x in k for x in ("error code", "hex", "code", "hresult")):
+                    if not code:
+                        code = clean_md_text(val)
+                elif any(x in k for x in ("symbolic name", "name", "error name", "constant")):
+                    sym_name = clean_md_text(val)
+                elif any(x in k for x in ("description", "message", "meaning", "fix")):
+                    if not message:
+                        message = clean_md_text(val)
+                    elif not description:
+                        description = clean_md_text(val)
+
+            if not code:
+                continue
+            if sym_name and message:
+                combined_msg = f"{sym_name} \u2014 {message}"
+            elif sym_name:
+                combined_msg = sym_name
+            elif message:
+                combined_msg = message
+            else:
+                combined_msg = ""
+
+            if re.match(r"^0x[0-9a-fA-F]+$", code):
+                errors.append({
+                    "code": code.upper().replace("0X", "0x"),
+                    "category": "Windows Update",
+                    "message": combined_msg[:300],
+                    "description": description[:500],
+                    "resolution": "",
+                    "source_file": source_file,
+                })
+            if sym_name and re.match(r"^[A-Z][A-Z0-9_]+$", sym_name):
+                sym_msg = description if description else ""
+                if code:
+                    sym_msg = f"({code}) {sym_msg}".strip()
+                errors.append({
+                    "code": sym_name,
+                    "category": "Windows Update",
+                    "message": sym_msg[:300],
+                    "description": description[:500],
+                    "resolution": "",
+                    "source_file": source_file,
+                })
+
+    if "0x8" in text or "0x0" in text:
+        blocks = extract_error_blocks(text, r"0x[0-9A-Fa-f]{6,10}")
+        for block in blocks:
+            if not any(e["code"] == block["code"] for e in errors):
+                errors.append({
+                    "code": block["code"],
+                    "category": "Windows Update",
+                    "message": block["message"],
+                    "description": block["description"],
+                    "resolution": "",
+                    "source_file": source_file,
+                })
+    return errors
+
+
+def parse_windows_update(source_path) -> list[dict]:
+    """Parse Windows Update error codes from URL or local repo.
+
+    Accepts either a Path (repo dir) or a str (URL) as source_path.
+    The upstream repo (windows-itpro-docs) is private, so this falls back to
+    fetching the learn.microsoft.com HTML page directly.
+    """
+    errors = []
+
+    if isinstance(source_path, str) and source_path.startswith("http"):
+        html = fetch_url_text(source_path)
+        if html:
+            errors = _parse_wu_from_html(html)
+    elif isinstance(source_path, Path) and source_path.exists():
+        for md_file in find_md_files(source_path):
+            text = read_md(md_file)
+            if not text:
+                continue
+            rel_path = str(md_file.relative_to(source_path))
+            errors.extend(_parse_wu_from_md(text, rel_path))
+
+    print(f"  Windows Update: {len(errors)} errors")
+    return errors
+
+
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
 PARSERS = {
@@ -661,6 +959,8 @@ PARSERS = {
     "parse_intune": parse_intune,
     "parse_sccm": parse_sccm,
     "parse_exchange": parse_exchange,
+    "parse_windows_installer": parse_windows_installer,
+    "parse_windows_update": parse_windows_update,
 }
 
 
@@ -671,9 +971,9 @@ _CODE_PATTERNS = re.compile(
     r"^("
     r"AADSTS\d+|"                          # Entra: AADSTS50001
     r"0x[0-9a-fA-F]+|"                     # Hex: 0x80cf0001
-    r"-?\d{5,}|"                           # Numeric: -2147024891
-    r"[A-Z][A-Z0-9_]{2,}|"                # Symbolic: ERROR_SUCCESS
-    r"\d{3}|"                              # HTTP: 401, 403, 500
+    r"-?\d{5,}|"                           # Large numeric: -2147024891
+    r"\d{1,5}|"                            # Short numeric: 0, 87, 3010, 1603
+    r"[A-Z][A-Z0-9_]{2,}|"                # Symbolic: ERROR_SUCCESS, WU_E_*
     r"[45]\.\d+\.\d+|"                     # NDR: 5.1.1
     r"[A-Z]{2,}\d+|"                       # Mixed: MP_E_INVALID_CONTENT
     r"HR[A-Z_]+|"                          # HRESULT aliases
@@ -773,6 +1073,20 @@ def main():
     for source in SOURCES:
         product = source["product"]
         tag = source.get("tag", "")
+        parser_fn = PARSERS[source["parser"]]
+
+        # URL-based source (no git clone needed)
+        if "url" in source:
+            url = source["url"]
+            print(f"\n{'─' * 60}")
+            print(f"Processing: {product}")
+            print(f"  URL: {url}")
+            errors = parser_fn(url)
+            for e in errors:
+                e["product"] = product
+            product_errors[product].extend(errors)
+            continue
+
         repo_key = source["repo"] + "::" + tag
         print(f"\n{'─' * 60}")
         print(f"Processing: {product}" + (f" ({tag})" if tag else ""))
@@ -790,7 +1104,6 @@ def main():
                 continue
             cloned_repos[repo_key] = dest
 
-        parser_fn = PARSERS[source["parser"]]
         errors = parser_fn(dest)
 
         # Tag each error with product
