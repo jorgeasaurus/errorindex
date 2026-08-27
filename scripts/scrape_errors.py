@@ -80,7 +80,7 @@ SOURCES = [
         "product": "SCCM",
         "repo": "https://github.com/MicrosoftDocs/memdocs.git",
         "sparse_paths": [
-            "configmgr",
+            "intune/configmgr",
         ],
         "parser": "parse_sccm",
     },
@@ -223,6 +223,31 @@ def clean_md_text(text: str) -> str:
     text = re.sub(r"<[^>]+>", "", text)  # HTML tags
     text = re.sub(r"\s+", " ", text)  # collapse whitespace
     return text.strip()
+
+
+_SYMBOLIC_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]+$")
+
+
+def merge_symbolic_name(symbolic: str, message: str) -> tuple[str, str]:
+    """Prefix an ALL-CAPS symbolic name onto message.
+
+    The UI renders ``description || message``, so an ALL-CAPS token like
+    ``OM_S_REBOOT_REQUIRED`` must not stay in description or it hides the
+    real error text. Returns ``(message, description)``:
+    - if *symbolic* matches ``_SYMBOLIC_NAME_RE``, description is cleared
+      and the token is prefixed onto message
+    - otherwise the cleaned *symbolic* value is returned as description
+      (non-token text is preserved for the caller)
+    """
+    symbolic = clean_md_text(symbolic)
+    message = clean_md_text(message)
+    if symbolic and _SYMBOLIC_NAME_RE.match(symbolic):
+        if message and symbolic not in message:
+            message = f"{symbolic} \u2014 {message}"
+        elif not message:
+            message = symbolic
+        return message, ""
+    return message, symbolic
 
 
 def extract_error_blocks(text: str, code_pattern: str) -> list[dict]:
@@ -454,28 +479,33 @@ def parse_intune(repo_dir: Path) -> list[dict]:
                     elif any(x in k for x in ("hexadecimal error code", "hex error", "hex code")):
                         code_hex = clean_md_text(val) if not code_hex else code_hex
                     elif k in ("error code", "code", "error") and not code:
-                        code = val
+                        code = clean_md_text(val)
                     elif k in ("status code", "status") and not code:
-                        code = val
+                        code = clean_md_text(val)
                     # Symbolic name (secondary code info)
                     elif k in ("symbolic name",):
                         if not description:
-                            description = val
+                            description = clean_md_text(val)
                     # Message columns
                     elif any(x in k for x in ("error message", "message", "more information",
                                                 "what to do", "what you should try")):
                         if not message:
-                            message = val
+                            message = clean_md_text(val)
                         elif not resolution:
-                            resolution = val
+                            resolution = clean_md_text(val)
                     elif any(x in k for x in ("description", "cause", "reason", "details")):
                         if not message:
-                            message = val
+                            message = clean_md_text(val)
                         elif not description:
-                            description = val
+                            description = clean_md_text(val)
                     elif any(x in k for x in ("resolution", "solution", "fix", "remediation",
                                                 "troubleshoot", "action", "mitigation")):
-                        resolution = val
+                        resolution = clean_md_text(val)
+
+                # If description is a symbolic name (e.g. OM_S_REBOOT_REQUIRED),
+                # combine it with the actual message so it cannot shadow the
+                # human-readable text in the UI (description || message).
+                message, description = merge_symbolic_name(description, message)
 
                 # If we found dual hex/dec columns, emit entries for both
                 if code_hex or code_dec:
@@ -542,6 +572,35 @@ def categorize_intune_error(code: str, path: str) -> str:
     return "General"
 
 
+def classify_sccm_column(header: str) -> str:
+    """Map an SCCM table header to the output field that should receive its value.
+
+    Return values are output-field names, not header kinds:
+    - "code": identifier columns (error, code, status, hex, decimal, Message ID)
+    - "message": user-facing text, including headers that contain "description"
+      (e.g. "Error description") as well as message/details/text/information
+    - "symbolic": only the "Symbolic name" header (merged into message later)
+    - "resolution": resolution/solution/action/fix
+    - "": unrecognized
+
+    Text columns are preferred over generic "error"/"code" matches so headers
+    like "Error description" are not treated as code. "Message ID" /
+    "message-id" style headers are code identifiers and must not match as message.
+    """
+    k = " ".join(header.lower().replace("-", " ").replace("_", " ").split())
+    if "message id" in k:
+        return "code"
+    if k == "symbolic name":
+        return "symbolic"
+    if any(x in k for x in ("resolution", "solution", "action", "fix")):
+        return "resolution"
+    if any(x in k for x in ("description", "message", "details", "text", "information")):
+        return "message"
+    if any(x in k for x in ("error", "code", "status", "hex", "decimal")):
+        return "code"
+    return ""
+
+
 def parse_sccm(repo_dir: Path) -> list[dict]:
     """Parse SCCM/ConfigMgr error codes and status messages."""
     errors = []
@@ -560,22 +619,33 @@ def parse_sccm(repo_dir: Path) -> list[dict]:
             message = ""
             description = ""
             resolution = ""
+            symbolic = ""
 
             for key in row:
                 val = row[key]
                 if not val:
                     continue
-                k = key.lower()
-                if any(x in k for x in ("error", "code", "message id", "status", "hex", "decimal")):
-                    if not code:
-                        code = clean_md_text(val)
-                elif any(x in k for x in ("description", "message", "details", "text")):
+                kind = classify_sccm_column(key)
+                if kind == "message":
                     if not message:
                         message = clean_md_text(val)
                     elif not description:
                         description = clean_md_text(val)
-                elif any(x in k for x in ("resolution", "solution", "action", "fix")):
+                elif kind == "symbolic":
+                    if not symbolic:
+                        symbolic = clean_md_text(val)
+                elif kind == "resolution":
                     resolution = clean_md_text(val)
+                elif kind == "code":
+                    if not code:
+                        code = clean_md_text(val)
+
+            # Merge Symbolic name into message (same as Intune) so it cannot
+            # hide human-readable text via the UI's description || message.
+            if symbolic:
+                message, leftover = merge_symbolic_name(symbolic, message)
+                if leftover and not description:
+                    description = leftover
 
             if code and len(code) > 1:
                 errors.append({
@@ -1277,7 +1347,7 @@ def main():
             product_errors[product].extend(errors)
             continue
 
-        repo_key = source["repo"] + "::" + tag
+        repo_key = source["repo"] + "::" + tag + "::" + "|".join(sorted(source.get("sparse_paths", [])))
         print(f"\n{'─' * 60}")
         print(f"Processing: {product}" + (f" ({tag})" if tag else ""))
         print(f"  Repo: {source['repo']}")
