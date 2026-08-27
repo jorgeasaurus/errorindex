@@ -229,11 +229,15 @@ _SYMBOLIC_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]+$")
 
 
 def merge_symbolic_name(symbolic: str, message: str) -> tuple[str, str]:
-    """Prefix an ALL-CAPS symbolic name onto message; never leave it in description.
+    """Prefix an ALL-CAPS symbolic name onto message.
 
-    The UI renders ``description || message``, so storing a token like
-    ``OM_S_REBOOT_REQUIRED`` in description hides the real error text.
-    Returns (message, description) with description cleared on a successful merge.
+    The UI renders ``description || message``, so an ALL-CAPS token like
+    ``OM_S_REBOOT_REQUIRED`` must not stay in description or it hides the
+    real error text. Returns ``(message, description)``:
+    - if *symbolic* matches ``_SYMBOLIC_NAME_RE``, description is cleared
+      and the token is prefixed onto message
+    - otherwise the cleaned *symbolic* value is returned as description
+      (non-token text is preserved for the caller)
     """
     symbolic = clean_md_text(symbolic)
     message = clean_md_text(message)
