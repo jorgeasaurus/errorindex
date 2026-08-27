@@ -454,31 +454,35 @@ def parse_intune(repo_dir: Path) -> list[dict]:
                     elif any(x in k for x in ("hexadecimal error code", "hex error", "hex code")):
                         code_hex = clean_md_text(val) if not code_hex else code_hex
                     elif k in ("error code", "code", "error") and not code:
-                        code = val
+                        code = clean_md_text(val)
                     elif k in ("status code", "status") and not code:
-                        code = val
+                        code = clean_md_text(val)
                     # Symbolic name (secondary code info)
                     elif k in ("symbolic name",):
                         if not description:
-                            description = val
+                            description = clean_md_text(val)
                     # Message columns
                     elif any(x in k for x in ("error message", "message", "more information",
                                                 "what to do", "what you should try")):
                         if not message:
-                            message = val
+                            message = clean_md_text(val)
                         elif not resolution:
-                            resolution = val
+                            resolution = clean_md_text(val)
                     elif any(x in k for x in ("description", "cause", "reason", "details")):
                         if not message:
-                            message = val
+                            message = clean_md_text(val)
                         elif not description:
-                            description = val
+                            description = clean_md_text(val)
                     elif any(x in k for x in ("resolution", "solution", "fix", "remediation",
                                                 "troubleshoot", "action", "mitigation")):
-                        resolution = val
+                        resolution = clean_md_text(val)
 
                 # If description is a symbolic name (e.g. OM_S_REBOOT_REQUIRED),
                 # combine it with the actual message to produce a richer entry.
+                # Clean again so leftover markdown/whitespace cannot block the regex
+                # and leave the symbolic name in description (UI shadowing).
+                description = clean_md_text(description)
+                message = clean_md_text(message)
                 if (description and message
                         and re.match(r'^[A-Z][A-Z0-9_]+$', description)):
                     message = f"{description} \u2014 {message}"
@@ -550,10 +554,18 @@ def categorize_intune_error(code: str, path: str) -> str:
 
 
 def classify_sccm_column(header: str) -> str:
-    """Classify an SCCM table header as code, message, description, resolution, or "".
+    """Map an SCCM table header to the output field that should receive its value.
 
-    Message/description columns are preferred over generic "error"/"code" matches so
-    headers like "Error description" are not treated as code. "Message ID" /
+    Return values are output-field names, not header kinds:
+    - "code": identifier columns (error, code, status, hex, decimal, Message ID)
+    - "message": user-facing text, including headers that contain "description"
+      (e.g. "Error description") as well as message/details/text/information
+    - "description": only the "Symbolic name" header (secondary identifier)
+    - "resolution": resolution/solution/action/fix
+    - "": unrecognized
+
+    Text columns are preferred over generic "error"/"code" matches so headers
+    like "Error description" are not treated as code. "Message ID" /
     "message-id" style headers are code identifiers and must not match as message.
     """
     k = " ".join(header.lower().replace("-", " ").replace("_", " ").split())
