@@ -549,6 +549,27 @@ def categorize_intune_error(code: str, path: str) -> str:
     return "General"
 
 
+def classify_sccm_column(header: str) -> str:
+    """Classify an SCCM table header as code, message, description, resolution, or "".
+
+    Message/description columns are preferred over generic "error"/"code" matches so
+    headers like "Error description" are not treated as code. "Message ID" /
+    "message-id" style headers are code identifiers and must not match as message.
+    """
+    k = " ".join(header.lower().replace("-", " ").replace("_", " ").split())
+    if "message id" in k:
+        return "code"
+    if k == "symbolic name":
+        return "description"
+    if any(x in k for x in ("resolution", "solution", "action", "fix")):
+        return "resolution"
+    if any(x in k for x in ("description", "message", "details", "text", "information")):
+        return "message"
+    if any(x in k for x in ("error", "code", "status", "hex", "decimal")):
+        return "code"
+    return ""
+
+
 def parse_sccm(repo_dir: Path) -> list[dict]:
     """Parse SCCM/ConfigMgr error codes and status messages."""
     errors = []
@@ -572,23 +593,18 @@ def parse_sccm(repo_dir: Path) -> list[dict]:
                 val = row[key]
                 if not val:
                     continue
-                k = key.lower()
-                # Check message/description columns FIRST so that columns like
-                # "error description" or "error message" are not misidentified
-                # as code columns due to the word "error".
-                if any(x in k for x in ("description", "message", "details",
-                                         "text", "information")):
+                kind = classify_sccm_column(key)
+                if kind == "message":
                     if not message:
                         message = clean_md_text(val)
                     elif not description:
                         description = clean_md_text(val)
-                elif k in ("symbolic name",):
+                elif kind == "description":
                     if not description:
                         description = clean_md_text(val)
-                elif any(x in k for x in ("resolution", "solution", "action", "fix")):
+                elif kind == "resolution":
                     resolution = clean_md_text(val)
-                elif any(x in k for x in ("error", "code", "message id", "status",
-                                           "hex", "decimal")):
+                elif kind == "code":
                     if not code:
                         code = clean_md_text(val)
 
