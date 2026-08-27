@@ -225,6 +225,27 @@ def clean_md_text(text: str) -> str:
     return text.strip()
 
 
+_SYMBOLIC_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]+$")
+
+
+def merge_symbolic_name(symbolic: str, message: str) -> tuple[str, str]:
+    """Prefix an ALL-CAPS symbolic name onto message; never leave it in description.
+
+    The UI renders ``description || message``, so storing a token like
+    ``OM_S_REBOOT_REQUIRED`` in description hides the real error text.
+    Returns (message, description) with description cleared on a successful merge.
+    """
+    symbolic = clean_md_text(symbolic)
+    message = clean_md_text(message)
+    if symbolic and _SYMBOLIC_NAME_RE.match(symbolic):
+        if message and symbolic not in message:
+            message = f"{symbolic} \u2014 {message}"
+        elif not message:
+            message = symbolic
+        return message, ""
+    return message, symbolic
+
+
 def extract_error_blocks(text: str, code_pattern: str) -> list[dict]:
     """Extract error blocks that follow a pattern of heading with error code."""
     errors = []
@@ -478,15 +499,9 @@ def parse_intune(repo_dir: Path) -> list[dict]:
                         resolution = clean_md_text(val)
 
                 # If description is a symbolic name (e.g. OM_S_REBOOT_REQUIRED),
-                # combine it with the actual message to produce a richer entry.
-                # Clean again so leftover markdown/whitespace cannot block the regex
-                # and leave the symbolic name in description (UI shadowing).
-                description = clean_md_text(description)
-                message = clean_md_text(message)
-                if (description and message
-                        and re.match(r'^[A-Z][A-Z0-9_]+$', description)):
-                    message = f"{description} \u2014 {message}"
-                    description = ""
+                # combine it with the actual message so it cannot shadow the
+                # human-readable text in the UI (description || message).
+                message, description = merge_symbolic_name(description, message)
 
                 # If we found dual hex/dec columns, emit entries for both
                 if code_hex or code_dec:
@@ -560,7 +575,7 @@ def classify_sccm_column(header: str) -> str:
     - "code": identifier columns (error, code, status, hex, decimal, Message ID)
     - "message": user-facing text, including headers that contain "description"
       (e.g. "Error description") as well as message/details/text/information
-    - "description": only the "Symbolic name" header (secondary identifier)
+    - "symbolic": only the "Symbolic name" header (merged into message later)
     - "resolution": resolution/solution/action/fix
     - "": unrecognized
 
@@ -572,7 +587,7 @@ def classify_sccm_column(header: str) -> str:
     if "message id" in k:
         return "code"
     if k == "symbolic name":
-        return "description"
+        return "symbolic"
     if any(x in k for x in ("resolution", "solution", "action", "fix")):
         return "resolution"
     if any(x in k for x in ("description", "message", "details", "text", "information")):
@@ -600,6 +615,7 @@ def parse_sccm(repo_dir: Path) -> list[dict]:
             message = ""
             description = ""
             resolution = ""
+            symbolic = ""
 
             for key in row:
                 val = row[key]
@@ -611,14 +627,21 @@ def parse_sccm(repo_dir: Path) -> list[dict]:
                         message = clean_md_text(val)
                     elif not description:
                         description = clean_md_text(val)
-                elif kind == "description":
-                    if not description:
-                        description = clean_md_text(val)
+                elif kind == "symbolic":
+                    if not symbolic:
+                        symbolic = clean_md_text(val)
                 elif kind == "resolution":
                     resolution = clean_md_text(val)
                 elif kind == "code":
                     if not code:
                         code = clean_md_text(val)
+
+            # Merge Symbolic name into message (same as Intune) so it cannot
+            # hide human-readable text via the UI's description || message.
+            if symbolic:
+                message, leftover = merge_symbolic_name(symbolic, message)
+                if leftover and not description:
+                    description = leftover
 
             if code and len(code) > 1:
                 errors.append({
