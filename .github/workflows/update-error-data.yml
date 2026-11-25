@@ -3,21 +3,28 @@ name: Update error data
 on:
   schedule:
     - cron: "30 5 3 * *"
+  push:
+    branches:
+      - main
+    paths:
+      - "public/**"
   workflow_dispatch:
-
-concurrency:
-  group: update-error-data
-  cancel-in-progress: true
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
   update-data:
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Unpaced scrape was ~14 min. Learn pacing stretched the Intune phase from
+    # 8m16s to 17m49s (~2.15x), so a full paced run is ~30 min before the
+    # patient 403 backoff (up to ~3 min) and short crawl retries. 30 cancelled
+    # run 45558344266 in the tail. 90 covers the paced run plus that backoff.
+    timeout-minutes: 90
+    concurrency:
+      group: update-error-data
+      cancel-in-progress: true
 
     outputs:
       changes_detected: ${{ steps.auto-commit.outputs.changes_detected }}
@@ -52,9 +59,24 @@ jobs:
         run: git push
 
   deploy:
+    # Push from GITHUB_TOKEN does not start a new workflow run, so a scheduled
+    # scrape still deploys from this job after it pushes. A push of public/**
+    # or a manual dispatch deploys main without waiting on the scraper.
     needs: update-data
-    if: needs.update-data.outputs.changes_detected == 'true' || github.event_name == 'workflow_dispatch'
+    if: |
+      always() && !cancelled() && (
+        github.event_name == 'push' ||
+        github.event_name == 'workflow_dispatch' ||
+        needs.update-data.outputs.changes_detected == 'true'
+      )
     runs-on: ubuntu-latest
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
