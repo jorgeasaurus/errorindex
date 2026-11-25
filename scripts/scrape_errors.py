@@ -19,9 +19,14 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import time
+import urllib.error
 import urllib.request
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -119,7 +124,7 @@ SOURCES = [
     },
     {
         "product": "Intune",
-        "url": "https://tplant.com.au/blog/intune-error-codes/",
+        "url": "https://tplant.com.au/notes/microsoft/intune/error-codes",
         "parser": "parse_tplant_intune",
     },
 ]
@@ -851,15 +856,365 @@ def parse_windows_installer(repo_dir: Path) -> list[dict]:
     return errors
 
 
-def fetch_url_text(url: str) -> str:
+# Learn returns 403 to the short scraper UA once a crawl is in flight. A browser
+# UA is accepted, and 403/429/503 are retried rather than cached as empty pages.
+_FETCH_USER_AGENTS = (
+    "Mozilla/5.0 (compatible; ErrorIndex/1.0)",
+    "ErrorIndex-Scraper/1.0",
+)
+
+
+def fetch_url_text(url: str, timeout: int = 60, quiet: bool = False) -> str:
     """Fetch a URL and return the body as text. Returns empty string on failure."""
+    for attempt in range(4):
+        user_agent = _FETCH_USER_AGENTS[min(attempt, len(_FETCH_USER_AGENTS) - 1)]
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+            })
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 429, 503) and attempt < 3:
+                time.sleep(2 * (attempt + 1))
+                continue
+            if not quiet and e.code != 404:
+                print(f"  Warning: Fetch failed for {url}: {e}", file=sys.stderr)
+            return ""
+        except Exception as e:
+            if attempt < 3:
+                time.sleep(2 * (attempt + 1))
+                continue
+            if not quiet:
+                print(f"  Warning: Fetch failed for {url}: {e}", file=sys.stderr)
+            return ""
+    return ""
+
+
+class _LearnContentParser(HTMLParser):
+    """Turn Learn article bodies into markdown the table parsers already understand.
+
+    Learn puts the title and the article in separate ``div.content`` nodes, so
+    every such node is captured. Tables become GitHub-style markdown tables.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._div_depth = 0
+        self._capturing = False
+        self._skip = 0
+        self._blocks: list[str] = []
+        self._text: list[str] | None = None
+        self._text_kind: str | None = None
+        self._table: list[list[str]] | None = None
+        self._row: list[str] | None = None
+
+    def handle_starttag(self, tag, attrs):
+        classes = (dict(attrs).get("class") or "").split()
+        if tag == "div":
+            if self._capturing:
+                self._div_depth += 1
+            elif "content" in classes:
+                self._capturing = True
+                self._div_depth = 1
+        if not self._capturing:
+            return
+        if tag in ("script", "style", "svg", "noscript"):
+            self._skip += 1
+            return
+        if self._skip:
+            return
+        if tag == "table":
+            self._finish_inline()
+            self._table = []
+        elif tag == "tr" and self._table is not None:
+            self._row = []
+        elif tag in ("td", "th") and self._row is not None:
+            self._text = []
+            self._text_kind = "cell"
+        elif tag in ("h1", "h2", "h3", "h4") and self._table is None:
+            self._finish_inline()
+            self._text = []
+            self._text_kind = tag
+        elif tag == "p" and self._table is None and self._text_kind is None:
+            self._text = []
+            self._text_kind = "p"
+        elif tag == "br" and self._text is not None:
+            self._text.append(" ")
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "svg", "noscript") and self._skip:
+            self._skip -= 1
+            return
+        if tag == "div" and self._capturing:
+            self._div_depth -= 1
+            if self._div_depth <= 0:
+                self._finish_inline()
+                self._flush_table()
+                self._capturing = False
+                self._div_depth = 0
+            return
+        if not self._capturing or self._skip:
+            return
+        if tag in ("td", "th") and self._text_kind == "cell":
+            cell = _collapse_html_text(self._text or [])
+            if self._row is not None:
+                self._row.append(cell)
+            self._text = None
+            self._text_kind = None
+        elif tag == "tr" and self._row is not None:
+            if any(cell.strip() for cell in self._row):
+                self._table.append(self._row)
+            self._row = None
+        elif tag == "table":
+            self._flush_table()
+        elif tag in ("h1", "h2", "h3", "h4", "p") and self._text_kind == tag:
+            self._finish_inline()
+
+    def handle_data(self, data):
+        if self._capturing and not self._skip and self._text is not None:
+            self._text.append(data)
+
+    def _finish_inline(self):
+        if self._text_kind not in ("p", "h1", "h2", "h3", "h4"):
+            return
+        text = _collapse_html_text(self._text or [])
+        kind = self._text_kind
+        self._text = None
+        self._text_kind = None
+        if not text:
+            return
+        if kind == "p":
+            self._blocks.append(text)
+        else:
+            self._blocks.append("#" * int(kind[1]) + " " + text)
+
+    def _flush_table(self):
+        rows = self._table or []
+        self._table = None
+        self._row = None
+        if len(rows) < 2:
+            return
+        width = max(len(row) for row in rows)
+
+        def fmt(row: list[str]) -> str:
+            cells = list(row) + [""] * (width - len(row))
+            return "| " + " | ".join(cells[:width]) + " |"
+
+        header = fmt(rows[0])
+        sep = "| " + " | ".join("---" for _ in range(width)) + " |"
+        body = "\n".join(fmt(row) for row in rows[1:])
+        self._blocks.append("\n".join((header, sep, body)))
+
+    def markdown(self) -> str:
+        self._finish_inline()
+        self._flush_table()
+        return "\n\n".join(block for block in self._blocks if block.strip())
+
+
+def _collapse_html_text(parts: list[str]) -> str:
+    text = re.sub(r"\s+", " ", "".join(parts)).strip()
+    return text.replace("|", "/")
+
+
+def html_content_to_markdown(html: str) -> str:
+    """Convert Learn ``div.content`` regions to markdown tables and headings."""
+    parser = _LearnContentParser()
+    parser.feed(html)
+    parser.close()
+    return parser.markdown()
+
+
+_LEARN_ORIGIN = "https://learn.microsoft.com/en-us"
+_LEARN_MD_CACHE: dict[str, str] = {}
+_CONFIGMGR_PAGES: list[str] | None = None
+_CONFIGMGR_SECTION_FALLBACK = (
+    "core", "tenant-attach", "develop", "comanage", "protect",
+    "apps", "mdt", "sum", "osd", "compliance", "cloud-attach",
+)
+
+
+def _fetch_json(url: str):
+    text = fetch_url_text(url, timeout=30, quiet=True)
+    if not text:
+        return None
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "ErrorIndex-Scraper/1.0"})
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            return resp.read().decode("utf-8", errors="replace")
-    except Exception as e:
-        print(f"  Warning: Fetch failed for {url}: {e}", file=sys.stderr)
-        return ""
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _toc_paths(toc, base_dir: str) -> list[str]:
+    """Page paths relative to the memdocs repo root, from a Learn toc.json."""
+    pages = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            href = (node.get("href") or "").strip()
+            if (
+                href
+                and href not in ("./", "../", "./", ".")
+                and not href.startswith(("http://", "https://", "/", "mailto:", "#"))
+                and "?" not in href
+                and not href.endswith((".yml", ".yaml", ".json"))
+            ):
+                rel = href[2:] if href.startswith("./") else href
+                rel = rel.strip("/")
+                if rel and rel not in (".", ".."):
+                    pages.append(f"{base_dir.strip('/')}/{rel}")
+            for child in node.get("children") or []:
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    items = toc.get("items", toc) if isinstance(toc, dict) else toc
+    walk(items)
+    return pages
+
+
+def _configmgr_section_names() -> list[str]:
+    hub = fetch_url_text(f"{_LEARN_ORIGIN}/intune/configmgr/", timeout=30, quiet=True)
+    sections = []
+    if hub:
+        for href in re.findall(r'href="([^"#?]+)"', hub):
+            if href.startswith(("http", "/", "mailto", "#", "javascript")):
+                continue
+            seg = href.split("/", 1)[0].strip()
+            if seg and seg not in (".", "..") and seg not in sections:
+                sections.append(seg)
+    for seg in _CONFIGMGR_SECTION_FALLBACK:
+        if seg not in sections:
+            sections.append(seg)
+    return sections
+
+
+def _pages_for_configmgr_sections(sections: list[str]) -> tuple[list[str], list[str]]:
+    pages = []
+    found = []
+    for seg in sections:
+        toc = None
+        for attempt in range(3):
+            toc = _fetch_json(f"{_LEARN_ORIGIN}/intune/configmgr/{seg}/toc.json")
+            if toc:
+                break
+            time.sleep(2 * (attempt + 1))
+        if not toc:
+            continue
+        found.append(seg)
+        pages.extend(_toc_paths(toc, f"intune/configmgr/{seg}"))
+    return pages, found
+
+
+def _configmgr_pages() -> list[str]:
+    """Pages under intune/configmgr, which Learn publishes as per-section TOCs."""
+    global _CONFIGMGR_PAGES
+    if _CONFIGMGR_PAGES is not None:
+        return list(_CONFIGMGR_PAGES)
+    sections = _configmgr_section_names()
+    pages, found = _pages_for_configmgr_sections(sections)
+    if not found:
+        pages, found = _pages_for_configmgr_sections(list(_CONFIGMGR_SECTION_FALLBACK))
+    seen = set()
+    unique = []
+    for page in pages:
+        if page not in seen:
+            seen.add(page)
+            unique.append(page)
+    _CONFIGMGR_PAGES = unique
+    print(f"  Learn ConfigMgr: {len(unique)} pages in {', '.join(found) or 'no'} sections")
+    return list(unique)
+
+
+def learn_pages_for_sparse_path(sparse_path: str) -> list[str]:
+    """Learn pages that correspond to a memdocs sparse-checkout path.
+
+    A git sparse checkout of ``intune`` includes ``intune/configmgr``. Learn
+    splits those into the Intune TOC plus one TOC per Configuration Manager
+    section, and no longer publishes ``/intune/configmgr/toc.json``.
+    """
+    pages = []
+    path = sparse_path.strip("/")
+    if path == "intune":
+        toc = _fetch_json(f"{_LEARN_ORIGIN}/intune/toc.json")
+        if toc:
+            pages.extend(_toc_paths(toc, "intune"))
+        pages.extend(_configmgr_pages())
+    elif path == "intune/configmgr" or path.startswith("intune/configmgr/"):
+        pages.extend(_configmgr_pages())
+    else:
+        toc = _fetch_json(f"{_LEARN_ORIGIN}/{path}/toc.json")
+        if toc:
+            pages.extend(_toc_paths(toc, path))
+    seen = set()
+    unique = []
+    for page in pages:
+        if page not in seen:
+            seen.add(page)
+            unique.append(page)
+    return unique
+
+
+def materialize_learn_sparse(dest: Path, sparse_paths: list[str]) -> bool:
+    """Write Learn articles as markdown so the git-repo parsers can read them.
+
+    Used when MicrosoftDocs/memdocs cannot be cloned. Returns True if at least
+    one article was written.
+    """
+    pages = []
+    for sparse_path in sparse_paths:
+        pages.extend(learn_pages_for_sparse_path(sparse_path))
+    seen = set()
+    unique = []
+    for page in pages:
+        if page not in seen:
+            seen.add(page)
+            unique.append(page)
+    if not unique:
+        print("  Learn fallback found no pages", file=sys.stderr)
+        return False
+
+    if dest.exists():
+        subprocess.run(["rm", "-rf", str(dest)], check=True)
+    dest.mkdir(parents=True)
+
+    lock = threading.Lock()
+
+    def one(rel: str) -> int:
+        url = f"{_LEARN_ORIGIN}/{rel}"
+        try:
+            with lock:
+                md = _LEARN_MD_CACHE.get(url)
+            if md is None:
+                html = fetch_url_text(url, timeout=25, quiet=True)
+                if not html:
+                    return 0
+                md = html_content_to_markdown(html)
+                with lock:
+                    _LEARN_MD_CACHE[url] = md
+            if not md.strip() or ("|" not in md and "0x" not in md.lower()):
+                return 0
+            path = dest / f"{rel}.md"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(md, encoding="utf-8")
+            return 1
+        except Exception as e:
+            print(f"  Warning: Learn page {rel}: {e}", file=sys.stderr)
+            return 0
+
+    written = 0
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for i, count in enumerate(pool.map(one, unique), 1):
+            written += count
+            if i % 200 == 0 or i == len(unique):
+                print(f"  Learn fallback: {i}/{len(unique)} pages, {written} with tables")
+    print(f"  Learn fallback: wrote {written} markdown files")
+    return written > 0
 
 
 def _parse_wu_from_html(html: str) -> list[dict]:
@@ -1302,6 +1657,14 @@ def is_valid_message(msg: str) -> bool:
     return True
 
 
+def _entry_text_len(entry: dict) -> int:
+    return (
+        len(entry.get("message") or "")
+        + len(entry.get("description") or "")
+        + len(entry.get("resolution") or "")
+    )
+
+
 def deduplicate(errors: list[dict]) -> list[dict]:
     """Remove duplicate error codes within the same product, keeping the richest entry."""
     seen = {}
@@ -1310,13 +1673,36 @@ def deduplicate(errors: list[dict]) -> list[dict]:
         if key in seen:
             existing = seen[key]
             # Keep whichever has more content
-            existing_len = len(existing.get("message", "")) + len(existing.get("description", "")) + len(existing.get("resolution", ""))
-            new_len = len(e.get("message", "")) + len(e.get("description", "")) + len(e.get("resolution", ""))
-            if new_len > existing_len:
+            if _entry_text_len(e) > _entry_text_len(existing):
                 seen[key] = e
         else:
             seen[key] = e
     return list(seen.values())
+
+
+def collapse_by_code(errors: list[dict]) -> list[dict]:
+    """One record per code for the product JSON object.
+
+    ``deduplicate`` keeps the same code in different categories, but the product
+    file is a map keyed only by code. Later rows replace earlier ones, except
+    an empty message must not hide a row that already has text.
+    """
+    chosen = {}
+    order = []
+    for entry in errors:
+        code = entry["code"]
+        previous = chosen.get(code)
+        if previous is None:
+            chosen[code] = entry
+            order.append(code)
+            continue
+        # Later rows win, matching the historical writer, except an empty
+        # message must not hide a row that already has one.
+        new_msg = (entry.get("message") or "").strip()
+        prev_msg = (previous.get("message") or "").strip()
+        if new_msg or not prev_msg:
+            chosen[code] = entry
+    return [chosen[code] for code in order]
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -1359,6 +1745,12 @@ def main():
             slug = product.lower().replace(" ", "_") + ("_" + tag if tag else "")
             dest = workdir / slug
             ok = clone_sparse(source["repo"], dest, source["sparse_paths"])
+            if not ok and source["repo"].rstrip("/").endswith("MicrosoftDocs/memdocs.git"):
+                # The repo is no longer public (clone exits 128). The same
+                # trees are still published on Learn, including the renamed
+                # software-update agent page (ref-agent-error-codes.md).
+                print("  memdocs clone failed; reading learn.microsoft.com instead")
+                ok = materialize_learn_sparse(dest, source["sparse_paths"])
             if not ok:
                 print(f"  Skipping {product} (clone failed)")
                 continue
@@ -1390,6 +1782,10 @@ def main():
         if rejected:
             print(f"  {product}: rejected {rejected} invalid codes")
         errors = deduplicate(valid)
+        # count stays the category-level total. The object below is one key
+        # per code, so count can exceed the number of keys when one code is
+        # filed under two categories.
+        stored = collapse_by_code(errors)
         product_slug = product.lower().replace(" ", "-")
         product_data = {
             "product": product,
@@ -1402,7 +1798,7 @@ def main():
                     "category": e.get("category", ""),
                     "source_file": e.get("source_file", ""),
                 }
-                for e in errors
+                for e in stored
             },
         }
         product_path = PRODUCTS_DIR / f"{product_slug}.json"
