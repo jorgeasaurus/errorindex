@@ -856,23 +856,24 @@ def parse_windows_installer(repo_dir: Path) -> list[dict]:
     return errors
 
 
-# Learn returns 403 to the short scraper UA once a crawl is in flight. A browser
-# UA is accepted, and 403/429/503 are retried rather than cached as empty pages.
-_FETCH_USER_AGENTS = (
-    "Mozilla/5.0 (compatible; ErrorIndex/1.0)",
-    "ErrorIndex-Scraper/1.0",
-)
+# Learn returns 403 to a short scraper UA once a crawl is in flight. Keep this
+# browser-style UA on every attempt, including 403/429/503 retries.
+_FETCH_USER_AGENT = "Mozilla/5.0 (compatible; ErrorIndex/1.0)"
+
+
+def _fetch_headers(_attempt: int) -> dict[str, str]:
+    """Headers for a fetch attempt. The user agent does not change between retries."""
+    return {
+        "User-Agent": _FETCH_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+    }
 
 
 def fetch_url_text(url: str, timeout: int = 60, quiet: bool = False) -> str:
     """Fetch a URL and return the body as text. Returns empty string on failure."""
     for attempt in range(4):
-        user_agent = _FETCH_USER_AGENTS[min(attempt, len(_FETCH_USER_AGENTS) - 1)]
         try:
-            req = urllib.request.Request(url, headers={
-                "User-Agent": user_agent,
-                "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
-            })
+            req = urllib.request.Request(url, headers=_fetch_headers(attempt))
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:

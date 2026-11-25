@@ -52,6 +52,11 @@ class LearnHtmlFallbackTest(unittest.TestCase):
         )
         self.assertEqual(match[0]["description"], "")
 
+    def test_fetch_retries_keep_the_accepted_user_agent(self):
+        agents = [scrape_errors._fetch_headers(attempt)["User-Agent"] for attempt in range(4)]
+        self.assertEqual(len(set(agents)), 1)
+        self.assertNotIn("ErrorIndex-Scraper", agents[0])
+
     def test_collapse_keeps_richer_text_for_shared_code(self):
         collapsed = scrape_errors.collapse_by_code([
             {
