@@ -1102,6 +1102,9 @@ def _fetch_json(url: str):
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        # A 200 that is not JSON (truncated body or an HTML block page) must
+        # not stay cached, or the TOC retry loop never requests the URL again.
+        _FETCH_BODY_CACHE.pop(url, None)
         return None
 
 

@@ -87,6 +87,15 @@ class LearnHtmlFallbackTest(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertTrue(scrape_errors.scrape_should_keep_previous(0, len(rows)))
 
+    def test_non_json_body_is_not_pinned_in_the_fetch_cache(self):
+        url = "https://learn.microsoft.com/en-us/intune/configmgr/core/toc.json"
+        scrape_errors._FETCH_BODY_CACHE[url] = "<html>not json</html>"
+        try:
+            self.assertIsNone(scrape_errors._fetch_json(url))
+            self.assertNotIn(url, scrape_errors._FETCH_BODY_CACHE)
+        finally:
+            scrape_errors._FETCH_BODY_CACHE.pop(url, None)
+
     def test_fetch_retries_keep_the_accepted_user_agent(self):
         agents = [scrape_errors._fetch_headers(attempt)["User-Agent"] for attempt in range(4)]
         self.assertEqual(len(set(agents)), 1)
