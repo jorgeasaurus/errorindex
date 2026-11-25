@@ -869,23 +869,78 @@ def _fetch_headers(_attempt: int) -> dict[str, str]:
     }
 
 
-def fetch_url_text(url: str, timeout: int = 60, quiet: bool = False) -> str:
+# Successful bodies, so a page fetched before the Learn crawl is not requested again
+# after that crawl has tripped a 403.
+_FETCH_BODY_CACHE: dict[str, str] = {}
+_LEARN_PACE_LOCK = threading.Lock()
+_LEARN_NEXT_REQUEST = 0.0
+# Cap how fast Learn requests start. The crawl is still the bulk of the run;
+# this only stops the thread pool from bursting.
+LEARN_REQUEST_INTERVAL = 0.1
+
+
+def fetch_backoff_seconds(attempt: int, patient: bool) -> float:
+    """Seconds to wait after a failed attempt before trying again.
+
+    The short schedule is for the bulk Learn crawl. A single page fetched
+    after that crawl (Windows Update) needs a longer wait: run 45551106926
+    still saw HTTP 403 after the 2s/4s/6s retries.
+    """
+    if attempt < 0:
+        return 0
+    if patient:
+        return (8, 20, 45, 60)[min(attempt, 3)]
+    return float(2 * (attempt + 1))
+
+
+def pace_learn_request(url: str) -> None:
+    """Space out Learn request starts across threads."""
+    if "learn.microsoft.com" not in url:
+        return
+    global _LEARN_NEXT_REQUEST
+    with _LEARN_PACE_LOCK:
+        now = time.monotonic()
+        delay = _LEARN_NEXT_REQUEST - now
+        if delay > 0:
+            time.sleep(delay)
+            now = time.monotonic()
+        _LEARN_NEXT_REQUEST = now + LEARN_REQUEST_INTERVAL
+
+
+def fetch_url_text(url: str, timeout: int = 60, quiet: bool = False, patient: bool = False) -> str:
     """Fetch a URL and return the body as text. Returns empty string on failure."""
-    for attempt in range(4):
+    cached = _FETCH_BODY_CACHE.get(url)
+    if cached:
+        return cached
+    attempts = 6 if patient else 4
+    for attempt in range(attempts):
+        pace_learn_request(url)
         try:
             req = urllib.request.Request(url, headers=_fetch_headers(attempt))
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read().decode("utf-8", errors="replace")
+                body = resp.read().decode("utf-8", errors="replace")
+            if body:
+                _FETCH_BODY_CACHE[url] = body
+            return body
         except urllib.error.HTTPError as e:
-            if e.code in (403, 429, 503) and attempt < 3:
-                time.sleep(2 * (attempt + 1))
+            if e.code in (403, 429, 503) and attempt < attempts - 1:
+                delay = fetch_backoff_seconds(attempt, patient)
+                if not quiet:
+                    print(
+                        f"  Warning: HTTP {e.code} for {url}; retrying in {delay:.0f}s",
+                        file=sys.stderr,
+                    )
+                time.sleep(delay)
                 continue
             if not quiet and e.code != 404:
                 print(f"  Warning: Fetch failed for {url}: {e}", file=sys.stderr)
             return ""
         except Exception as e:
-            if attempt < 3:
-                time.sleep(2 * (attempt + 1))
+            if attempt < attempts - 1:
+                delay = fetch_backoff_seconds(attempt, patient)
+                if not quiet:
+                    print(f"  Warning: Fetch failed for {url}: {e}; retrying in {delay:.0f}s", file=sys.stderr)
+                time.sleep(delay)
                 continue
             if not quiet:
                 print(f"  Warning: Fetch failed for {url}: {e}", file=sys.stderr)
@@ -1192,7 +1247,7 @@ def materialize_learn_sparse(dest: Path, sparse_paths: list[str]) -> bool:
             with lock:
                 md = _LEARN_MD_CACHE.get(url)
             if md is None:
-                html = fetch_url_text(url, timeout=25, quiet=True)
+                html = fetch_url_text(url, timeout=25, quiet=True, patient=False)
                 if not html:
                     return 0
                 md = html_content_to_markdown(html)
@@ -1369,7 +1424,7 @@ def parse_windows_update(source_path) -> list[dict]:
     errors = []
 
     if isinstance(source_path, str) and source_path.startswith("http"):
-        html = fetch_url_text(source_path)
+        html = fetch_url_text(source_path, patient=True)
         if html:
             errors = _parse_wu_from_html(html)
     elif isinstance(source_path, Path) and source_path.exists():
@@ -1681,6 +1736,56 @@ def deduplicate(errors: list[dict]) -> list[dict]:
     return list(seen.values())
 
 
+# A new count below half the committed count is "more than 50% below".
+SHARP_DROP_RATIO = 0.5
+
+
+def scrape_should_keep_previous(new_count: int, previous_count: int | None) -> bool:
+    """Keep the last committed product file when this scrape is empty or a sharp drop.
+
+    ``previous_count is None`` means there is no committed file to keep.
+    A count of zero is a failed scrape. A positive count is a sharp drop when
+    it is more than 50% below the previous committed count (strictly under half).
+    """
+    if previous_count is None or previous_count <= 0:
+        return False
+    if new_count <= 0:
+        return True
+    return new_count * 2 < previous_count
+
+
+def previous_committed_count(data: dict | None) -> int | None:
+    """Read the committed category-level count, falling back to the key count."""
+    if not data:
+        return None
+    count = data.get("count")
+    if isinstance(count, int):
+        return count
+    errors = data.get("errors")
+    if isinstance(errors, dict):
+        return len(errors)
+    return None
+
+
+def load_json_file(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def manifest_rows_for_product(manifest: dict | None, product: str) -> list[dict]:
+    if not manifest:
+        return []
+    rows = manifest.get("d")
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict) and row.get("p") == product]
+
+
 def collapse_by_code(errors: list[dict]) -> list[dict]:
     """One record per code for the product JSON object.
 
@@ -1716,6 +1821,16 @@ def main():
     # Collect errors per product from all sources
     product_errors: dict[str, list[dict]] = defaultdict(list)
     cloned_repos: dict[str, Path] = {}  # repo_url+tag -> local path
+
+    # Windows Update is one Learn page fetched after the Intune/SCCM crawl.
+    # Run 45551106926 got HTTP 403 there. Pull those pages first, while the
+    # client is not rate-limited, and reuse the body later.
+    for source in SOURCES:
+        url = source.get("url") or ""
+        if "learn.microsoft.com" not in url:
+            continue
+        print(f"Prefetching {url}")
+        fetch_url_text(url, timeout=60, quiet=False, patient=True)
 
     for source in SOURCES:
         product = source["product"]
@@ -1771,7 +1886,10 @@ def main():
 
     # Normalize, validate, deduplicate per product
     all_errors = []
+    kept_products: set[str] = set()
     product_names = sorted(product_errors.keys())
+    previous_manifest = load_json_file(DATA_DIR / "manifest.json")
+    previous_descriptions = load_json_file(DATA_DIR / "descriptions.json") or {}
 
     for product in product_names:
         raw = product_errors[product]
@@ -1783,11 +1901,22 @@ def main():
         if rejected:
             print(f"  {product}: rejected {rejected} invalid codes")
         errors = deduplicate(valid)
+        product_slug = product.lower().replace(" ", "-")
+        product_path = PRODUCTS_DIR / f"{product_slug}.json"
+        previous = load_json_file(product_path)
+        committed = previous_committed_count(previous)
+        if scrape_should_keep_previous(len(errors), committed):
+            kept_products.add(product)
+            print(
+                f"  Warning: {product}: scrape produced {len(errors)} errors, "
+                f"below the committed {committed}; keeping {product_path.name}",
+                file=sys.stderr,
+            )
+            continue
         # count stays the category-level total. The object below is one key
         # per code, so count can exceed the number of keys when one code is
         # filed under two categories.
         stored = collapse_by_code(errors)
-        product_slug = product.lower().replace(" ", "-")
         product_data = {
             "product": product,
             "count": len(errors),
@@ -1802,7 +1931,6 @@ def main():
                 for e in stored
             },
         }
-        product_path = PRODUCTS_DIR / f"{product_slug}.json"
         product_path.write_text(
             json.dumps(product_data, separators=(",", ":")),
             encoding="utf-8",
@@ -1810,13 +1938,32 @@ def main():
         print(f"  {product}: {len(errors)} errors → {product_path.name}")
         all_errors.extend(errors)
 
+    if previous_manifest:
+        seen_products = {
+            row.get("p")
+            for row in previous_manifest.get("d", [])
+            if isinstance(row, dict) and row.get("p")
+        }
+        for product in sorted(seen_products - set(product_names)):
+            rows = manifest_rows_for_product(previous_manifest, product)
+            if scrape_should_keep_previous(0, len(rows)):
+                kept_products.add(product)
+                print(
+                    f"  Warning: {product}: scrape produced 0 errors, "
+                    f"below the committed {len(rows)}; keeping previous data",
+                    file=sys.stderr,
+                )
+
     # Sort all errors by code
     all_errors.sort(key=lambda e: (e["product"], e["code"]))
 
-    # Build slim manifest
+    # Build slim manifest. A kept product reuses its committed manifest rows
+    # and descriptions so a failed scrape cannot drop them from the index.
     manifest_entries = []
     descriptions = {}
     for e in all_errors:
+        if e["product"] in kept_products:
+            continue
         manifest_entries.append({
             "c": e["code"],
             "p": e["product"],
@@ -1827,10 +1974,17 @@ def main():
         desc = e.get("description", "")
         if desc:
             descriptions[f"{e['product']}::{e['code']}"] = desc
+    for product in sorted(kept_products):
+        manifest_entries.extend(manifest_rows_for_product(previous_manifest, product))
+        prefix = f"{product}::"
+        for key, value in previous_descriptions.items():
+            if isinstance(key, str) and key.startswith(prefix):
+                descriptions[key] = value
+    manifest_entries.sort(key=lambda row: (row.get("p", ""), row.get("c", "")))
 
     manifest = {
         "updated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        "products": product_names,
+        "products": sorted(set(product_names) | kept_products),
         "count": len(manifest_entries),
         "d": manifest_entries,
     }
@@ -1860,10 +2014,16 @@ def main():
     for e in all_errors:
         product_counts[e["product"]] += 1
         category_counts[e.get("category", "General")] += 1
+    kept_total = 0
+    for product in kept_products:
+        for row in manifest_rows_for_product(previous_manifest, product):
+            product_counts[product] += 1
+            category_counts[row.get("t") or "General"] += 1
+            kept_total += 1
 
     for product, count in sorted(product_counts.items()):
         print(f"  {product}: {count} errors")
-    print(f"  Total: {len(all_errors)} errors")
+    print(f"  Total: {len(all_errors) + kept_total} errors")
     print(f"  Categories: {', '.join(sorted(category_counts.keys()))}")
     with_resolution = sum(1 for e in all_errors if e.get("resolution"))
     print(f"  With resolution: {with_resolution} ({100 * with_resolution / max(len(all_errors), 1):.1f}%)")

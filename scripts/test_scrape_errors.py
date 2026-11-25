@@ -52,6 +52,41 @@ class LearnHtmlFallbackTest(unittest.TestCase):
         )
         self.assertEqual(match[0]["description"], "")
 
+    def test_scrape_keeps_previous_on_empty_or_sharp_drop(self):
+        keep = scrape_errors.scrape_should_keep_previous
+        self.assertTrue(keep(0, 516))
+        self.assertTrue(keep(257, 516))  # more than 50% below
+        self.assertFalse(keep(258, 516))  # exactly half remains
+        self.assertFalse(keep(400, 516))
+        self.assertFalse(keep(0, None))
+        self.assertFalse(keep(0, 0))
+        self.assertFalse(keep(10, 10))
+        self.assertEqual(
+            scrape_errors.previous_committed_count({"count": 516, "errors": {"a": {}, "b": {}}}),
+            516,
+        )
+
+    def test_patient_backoff_outlasts_the_short_retry(self):
+        self.assertEqual(scrape_errors.fetch_backoff_seconds(0, patient=False), 2)
+        self.assertEqual(scrape_errors.fetch_backoff_seconds(2, patient=False), 6)
+        self.assertGreaterEqual(scrape_errors.fetch_backoff_seconds(0, patient=True), 8)
+        self.assertGreater(
+            scrape_errors.fetch_backoff_seconds(2, patient=True),
+            scrape_errors.fetch_backoff_seconds(2, patient=False),
+        )
+
+    def test_kept_product_reuses_committed_manifest_rows(self):
+        manifest = {
+            "d": [
+                {"c": "0x1", "p": "Windows Update", "t": "General", "m": "one", "h": False},
+                {"c": "0x1", "p": "Windows Update", "t": "Other", "m": "two", "h": False},
+                {"c": "AADSTS1", "p": "Entra ID", "t": "Authentication", "m": "aad", "h": False},
+            ]
+        }
+        rows = scrape_errors.manifest_rows_for_product(manifest, "Windows Update")
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(scrape_errors.scrape_should_keep_previous(0, len(rows)))
+
     def test_fetch_retries_keep_the_accepted_user_agent(self):
         agents = [scrape_errors._fetch_headers(attempt)["User-Agent"] for attempt in range(4)]
         self.assertEqual(len(set(agents)), 1)
